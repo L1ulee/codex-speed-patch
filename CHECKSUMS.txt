@@ -1,0 +1,6 @@
+c278aace30d936f44d96934230465a5fa90ffbe7543b7678e612edc3e879ed69  dist/codex-speed-patch-darwin-amd64
+4794e2fc40115b8b3cc2dd9990aaecc0afa8c5b14aac6295626f98ffe49fd3da  dist/codex-speed-patch-darwin-arm64
+4d600c006751e8323c90e7cea1291ae112419f95091e964a2d1234c1aa981e23  dist/codex-speed-patch-linux-amd64
+b75c2da439b1404d9346814f3375260ae36a020fc94738d80dbe84bfecb07227  dist/codex-speed-patch-linux-arm64
+1020373d17e96d6e61d20dc86abe938d3e04d2362893beab7b54e48c7922aa54  dist/codex-speed-patch-windows-amd64.exe
+d1833e84266182ea05e5cda992a72362f0298fcbb5f259553bb649090fdbf168  dist/codex-speed-patch-windows-arm64.exe
