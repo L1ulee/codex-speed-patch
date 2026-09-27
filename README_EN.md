@@ -8,20 +8,19 @@ The patcher reuses Codex's existing model catalog, `service_tiers`, `service_tie
 
 ## Current Status
 
-- Patcher version: `0.1.0`
-- macOS test date: `2026-09-07`
-- Tested Codex Desktop: `26.901.41123`, build `7942`
-- Tested Codex CLI: `0.153.3`
-- Tested model: `gpt-5.6-sol`
-- Verified control: `aria-label="速度 快速"`, `disabled=false`
+- Patcher version: `0.1.1`
+- macOS test date: `2026-09-28`
+- Tested Codex Desktop: `26.924.22138`
 
-Both the production application and an isolated copy passed these checks:
+Both the isolated copy and the installed application passed these checks:
 
 - Codex CLI/app-server initialized successfully.
 - The main window reached `ready-to-show`.
 - The model picker opened successfully.
-- An enabled Speed control appeared under an API/custom provider.
+- The native Fast control appeared under an API/custom provider and could be switched (confirmed manually).
 - `codesign --verify --deep --strict` passed.
+
+The installed application was deployed by replacing it with the verified isolated copy, not by patching an officially signed app in place with the CLI. Real model requests, Keychain, push notifications, and automatic updates remain unverified.
 
 ## How It Works
 
@@ -46,8 +45,8 @@ The patcher performs these steps:
 3. Apply an equal-length replacement so ASAR offsets do not move.
 4. Recalculate the target file SHA-256 and ASAR block hashes.
 5. Update integrity records inside the ASAR Header JSON.
-6. On macOS, write the Header JSON SHA-256 to `ElectronAsarIntegrity`.
-7. Re-sign and verify the application.
+6. On macOS, write the Header JSON SHA-256 to `ElectronAsarIntegrity` and update the Framework's `__asar_integrity` digest.
+7. Re-sign Helpers, Framework, and outer app in that order, then verify.
 
 ## Safety Model
 
@@ -57,16 +56,17 @@ The patcher performs these steps:
 - The original file hash and every block hash are verified before modification.
 - The patched ASAR is reopened and must report the `patched` state.
 - Each Codex version uses a separate backup directory.
-- A full APFS-cloned `.app` backup is created before a production macOS patch.
+- On macOS, signing identity and path are checked before writing; production apps retaining a TeamIdentifier are not modified.
+- A full APFS-cloned `.app` backup is created before modifying an eligible macOS app.
 - Unknown Codex versions are not modified speculatively.
 - Automatic restart requests graceful shutdown only; force termination is disabled.
 - Restart attempt IDs prevent restart loops.
 
 ## Important macOS Notes
 
-Modifying a resource inside the `.app` invalidates the original OpenAI Developer ID signature. The patcher applies a local deep ad-hoc signature to the modified application.
+Modifying a resource inside the `.app` invalidates the original OpenAI Developer ID signature. This patcher can only apply a local ad-hoc signature. Preflight still rejects in-place modification of an official app with a TeamIdentifier; the installed app in this test was replaced with a verified isolated copy, and a full original signed backup was retained.
 
-A production patch requires:
+`--allow-macos-production` only passes the production path check; it does not bypass the official signing preflight:
 
 ```bash
 --allow-macos-production
@@ -78,7 +78,7 @@ An isolated-copy test requires:
 --allow-macos-test
 ```
 
-Test mode refuses to modify applications inside `/Applications` or the user's `Applications` directory. Production mode creates a full backup before allowing a modification inside an Applications directory.
+Test mode only allows isolated copies in temporary directories and refuses to modify applications inside `/Applications` or the user's `Applications` directory. A copied official app is fully backed up before the isolated signing experiment.
 
 ### ElectronAsarIntegrity
 
@@ -92,11 +92,11 @@ NSPOSIXErrorDomain Code=163
 Launchd job spawn failed
 ```
 
-Version `0.1.0` uses the correct Header JSON hashing algorithm.
+The current implementation also updates the Framework digest of the complete `ElectronAsarIntegrity` dictionary. Updating only `Info.plist` causes Electron to report `Failed to get integrity for validatable asar archive`.
 
 ### Signing Impact
 
-The patched application no longer retains the OpenAI Developer ID or original TeamIdentifier. Potentially affected capabilities include:
+An ad-hoc signature cannot retain the OpenAI Developer ID or original TeamIdentifier. Potentially affected capabilities include:
 
 - Sparkle automatic updates.
 - Keychain access groups.
@@ -104,13 +104,13 @@ The patched application no longer retains the OpenAI Developer ID or original Te
 - Application Groups.
 - System services that depend on the official signing identity.
 
-The full official application backup restores these capabilities.
+These capabilities may be affected. A full official application backup restores the original signing identity.
 
 ## Quick Start
 
 ### 1. Select a Binary
 
-`dist/` contains:
+This GitHub Release contains source only. After building with the commands below, `dist/` can contain:
 
 ```text
 codex-speed-patch-darwin-arm64
@@ -144,24 +144,24 @@ State values:
 ### 3. Test an Isolated macOS Copy
 
 ```bash
-cp -cR "/Applications/ChatGPT.app" "/path/to/ChatGPT-Speed-Test.app"
+# Copy an unpatched, officially signed app
+cp -cR "/Applications/ChatGPT.app" "/private/tmp/Codex-Speed-Test.app"
 
-dist/codex-speed-patch-darwin-arm64 repair \
+codex-speed-patch repair \
   --allow-macos-test \
-  --app "/path/to/ChatGPT-Speed-Test.app" \
+  --app "/private/tmp/Codex-Speed-Test.app" \
   --restart=never
 ```
 
-### 4. Patch the Production macOS App
+Test mode only allows copies in temporary directories. Even when a copy retains the official signature, it is fully backed up before ad-hoc re-signing. The CLI does not patch officially signed apps in place.
+
+### 4. Restore a Previously Patched macOS App
 
 ```bash
-dist/codex-speed-patch-darwin-arm64 repair \
-  --allow-macos-production \
-  --app "/Applications/ChatGPT.app" \
-  --restart=deferred-auto
+codex-speed-patch restore --app "/Applications/ChatGPT.app"
 ```
 
-Before modifying the production application, the patcher creates a full backup under:
+`restore` requires a backup recorded in the manifest. Full backups from earlier versions are commonly stored under:
 
 ```text
 ~/.codex/patches/speed-mode/backups/<APP_VERSION>-<ASAR_HASH>/ChatGPT.app
@@ -182,7 +182,7 @@ Install the hooks:
   --binary ~/.codex/patches/speed-mode/bin/codex-speed-patch
 ```
 
-The installer adds these entries to `~/.codex/hooks.json`:
+The installer adds these entries to `~/.codex/hooks.json`; do not install the automatic patch hook for official signed macOS apps:
 
 - `SessionStart`: detects Codex updates and reapplies the patch.
 - `Stop`: schedules one deferred restart after the active turn completes.
@@ -206,11 +206,11 @@ codex-speed-patch status
 # Detect and repair
 codex-speed-patch repair
 
-# Patch the production macOS app
+# Official signed macOS apps are rejected by preflight
 codex-speed-patch repair --allow-macos-production --restart=deferred-auto
 
-# Patch an isolated macOS copy
-codex-speed-patch repair --allow-macos-test --app "/path/to/Test.app"
+# An isolated macOS copy in a temporary directory is backed up and re-signed
+codex-speed-patch repair --allow-macos-test --app "/private/tmp/Test.app"
 
 # Restore a backup
 codex-speed-patch restore --app "/Applications/ChatGPT.app"
@@ -236,7 +236,7 @@ codex-speed-patch restore \
   --app "/Applications/ChatGPT.app"
 ```
 
-When a complete macOS `.app` backup exists, rollback clones the official backup, moves the patched app to a staging path, atomically activates the official copy, verifies the official signature, and removes the staged patched app.
+When the manifest records a complete macOS `.app` backup, rollback clones the official backup, moves the patched app to a staging path, activates the official copy, verifies the official signature, and removes the staged patched app.
 
 To remove the automatic maintenance hooks as well:
 
@@ -249,10 +249,9 @@ codex-speed-patch remove-hook
 ### macOS
 
 - Apple Silicon and Intel builds are available.
-- Production patching requires `--allow-macos-production`.
-- Isolated tests require `--allow-macos-test`.
-- A full APFS application backup is created before production modification.
-- The modified app receives a deep ad-hoc signature.
+- Official signed apps with a TeamIdentifier are rejected before modification.
+- `--allow-macos-production` and `--allow-macos-test` only control path scope; an isolated temporary copy still requires a full backup and re-signing.
+- An existing full APFS app backup can restore the original signed version.
 
 ### Windows
 
@@ -285,7 +284,7 @@ GOOS=windows GOARCH=amd64 go build -o dist/codex-speed-patch-windows-amd64.exe .
 GOOS=windows GOARCH=arm64 go build -o dist/codex-speed-patch-windows-arm64.exe ./cmd/codex-speed-patch
 ```
 
-Release SHA-256 values are listed in [CHECKSUMS.txt](CHECKSUMS.txt).
+[CHECKSUMS.txt](CHECKSUMS.txt) records historical `v0.1.0` binary checksums; it does not apply to this source-only `v0.1.1` Release.
 
 ## State Files
 
@@ -304,7 +303,7 @@ The default state directory is:
 ## Known Limitations
 
 - A Codex frontend change can cause the existing semantic rule to return `unknown`.
-- An ad-hoc signature cannot replace the OpenAI Developer ID identity.
+- An ad-hoc signature cannot replace the OpenAI Developer ID identity; official signed macOS apps are not patched in place.
 - The automatic updater itself may depend on the official signing identity.
 - Restarting during multiple windows or parallel tasks affects the entire Codex application.
 - The upstream API must accept the selected `service_tier`; displaying the control does not guarantee server-side tier support.

@@ -85,7 +85,8 @@ type PatchResult struct {
 }
 
 var gatePattern = regexp.MustCompile(`([A-Za-z_$][A-Za-z0-9_$]*)&&!([A-Za-z_$][A-Za-z0-9_$]*)&&([A-Za-z_$][A-Za-z0-9_$]*)!=null&&([A-Za-z_$][A-Za-z0-9_$]*)\?\.requirements\?\.featureRequirements\?\.fast_mode!==!1`)
-var patchedGatePattern = regexp.MustCompile(`!([A-Za-z_$][A-Za-z0-9_$]*)&&\(!([A-Za-z_$][A-Za-z0-9_$]*)\|\|([A-Za-z_$][A-Za-z0-9_$]*)\?\.requirements\?\.featureRequirements\?\.fast_mode!==!1\)`)
+var patchedGatePattern = regexp.MustCompile(`!([A-Za-z_$][A-Za-z0-9_$]*)&&\(!([A-Za-z_$][A-Za-z0-9_$]*)\|\|!!([A-Za-z_$][A-Za-z0-9_$]*)&&([A-Za-z_$][A-Za-z0-9_$]*)\?\.requirements\?\.featureRequirements\?\.fast_mode!==!1\)`)
+var previousPatchedGatePattern = regexp.MustCompile(`!([A-Za-z_$][A-Za-z0-9_$]*)&&\(!([A-Za-z_$][A-Za-z0-9_$]*)\|\|([A-Za-z_$][A-Za-z0-9_$]*)\?\.requirements\?\.featureRequirements\?\.fast_mode!==!1\)`)
 
 func Open(path string) (*Archive, error) {
 	f, err := os.Open(path)
@@ -197,7 +198,7 @@ func (a *Archive) Probe() (*ProbeResult, error) {
 			loadingVar := string(data[match[4]:match[5]])
 			dataVar := string(dataVar1)
 			original := append([]byte(nil), data[match[0]:match[1]]...)
-			replacement := []byte(fmt.Sprintf("!%s&&(!%s||%s?.requirements?.featureRequirements?.fast_mode!==!1)", loadingVar, authVar, dataVar))
+			replacement := []byte(fmt.Sprintf("!%s&&(!%s||!!%s&&%s?.requirements?.featureRequirements?.fast_mode!==!1)", loadingVar, authVar, dataVar, dataVar))
 			if len(replacement) > len(original) {
 				return nil, fmt.Errorf("generated replacement is larger than original expression in %s", entry.Path)
 			}
@@ -210,9 +211,9 @@ func (a *Archive) Probe() (*ProbeResult, error) {
 				Replacement: replacement,
 			})
 		}
-		matches := patchedGatePattern.FindAllSubmatchIndex(data, -1)
-		if len(matches) > 0 {
-			patchedCount += len(matches)
+		count := len(patchedGatePattern.FindAllIndex(data, -1)) + len(previousPatchedGatePattern.FindAllIndex(data, -1))
+		if count > 0 {
+			patchedCount += count
 			patchedPath = entry.Path
 		}
 	}

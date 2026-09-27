@@ -8,20 +8,19 @@
 
 ## 当前状态
 
-- 补丁器版本：`0.1.0`
-- macOS 实测日期：`2026-09-07`
-- 已测试 Codex Desktop：`26.901.41123`，build `7942`
-- 已测试 Codex CLI：`0.153.3`
-- 已测试模型：`gpt-5.6-sol`
-- 已验证控件：`aria-label="速度 快速"`，`disabled=false`
+- 补丁器版本：`0.1.1`
+- macOS 实测日期：`2026-09-28`
+- 已测试 Codex Desktop：`26.924.22138`
 
-正式应用和隔离副本均通过以下检查：
+隔离副本和正式应用均通过以下检查：
 
 - Codex CLI/app-server 初始化成功。
 - 主窗口完成 `ready-to-show`。
 - 模型选择器可以打开。
-- API/custom provider 下显示已启用的 Speed 控件。
+- API/custom provider 下原生 Fast 控件可见且可切换（人工确认）。
 - `codesign --verify --deep --strict` 通过。
+
+本次正式应用采用已验证隔离副本离线替换，不是补丁器 CLI 对官方签名应用的原位修改。真实模型请求、Keychain、推送和自动更新尚未验证。
 
 ## 工作原理
 
@@ -46,8 +45,8 @@ Codex 模型目录已经可以声明速度档位：
 3. 使用等长表达式替换，保持 ASAR 文件偏移不变。
 4. 重算目标文件 SHA-256 和 ASAR 分块哈希。
 5. 更新 ASAR Header JSON 中的完整性记录。
-6. macOS 上将 Header JSON SHA-256 写入 `ElectronAsarIntegrity`。
-7. 重新签名并验证应用。
+6. macOS 上将 Header JSON SHA-256 写入 `ElectronAsarIntegrity`，并同步 Framework 的 `__asar_integrity` 摘要。
+7. 按 Helper、Framework、外层应用的顺序重新签名并验证。
 
 ## 安全机制
 
@@ -57,16 +56,17 @@ Codex 模型目录已经可以声明速度档位：
 - 修改前验证文件哈希和全部分块哈希。
 - 修改后重新打开 ASAR，并确认状态为 `patched`。
 - 每个 Codex 版本使用独立备份目录。
-- macOS 正式补丁前使用 APFS clone 备份整个 `.app`。
+- macOS 上在写入前检查签名身份和路径，拒绝修改保留 TeamIdentifier 的正式应用。
+- 对允许补丁的 macOS 应用，修改前使用 APFS clone 备份整个 `.app`。
 - 未知版本不会进行猜测性修改。
 - 自动重启只请求正常退出，不使用强制终止。
 - 重启 attempt ID 用于防止循环重启。
 
 ## macOS 重要说明
 
-修改 `.app` 内的资源会破坏 OpenAI 原始 Developer ID 签名。补丁器会对修改后的应用执行本地 ad-hoc 深度签名。
+修改 `.app` 内的资源会破坏 OpenAI 原始 Developer ID 签名。本工具只能执行本地 ad-hoc 重签名。补丁器仍会在预检阶段拒绝对带 TeamIdentifier 的官方应用原位修改；本次正式应用使用隔离副本离线替换，并保留了原签名完整备份。
 
-正式应用补丁必须显式传入：
+`--allow-macos-production` 仅放行生产路径检查，不能绕过官方签名预检：
 
 ```bash
 --allow-macos-production
@@ -78,7 +78,7 @@ Codex 模型目录已经可以声明速度档位：
 --allow-macos-test
 ```
 
-测试模式拒绝修改 `/Applications` 和用户 `Applications` 目录。生产模式会先完整备份应用，再允许修改 Applications 目录。
+测试模式仅允许临时目录中的隔离副本，拒绝修改 `/Applications` 和用户 `Applications` 目录；复制出的官方签名副本会先完整备份，再按隔离测试流程重签。
 
 ### ElectronAsarIntegrity
 
@@ -92,11 +92,11 @@ NSPOSIXErrorDomain Code=163
 Launchd job spawn failed
 ```
 
-版本 `0.1.0` 使用正确的 Header JSON 哈希算法。
+当前实现还会更新 Framework 中对整个 `ElectronAsarIntegrity` 字典的摘要。只更新 `Info.plist` 会导致 Electron 报 `Failed to get integrity for validatable asar archive`。
 
 ### 签名影响
 
-补丁后的应用不再保留 OpenAI Developer ID 和原始 TeamIdentifier，可能影响：
+ad-hoc 签名不能保留 OpenAI Developer ID 和原始 TeamIdentifier，可能影响：
 
 - Sparkle 自动更新。
 - Keychain 访问组。
@@ -104,13 +104,13 @@ Launchd job spawn failed
 - Application Groups。
 - 依赖官方签名身份的系统服务。
 
-完整官方应用备份可以恢复上述能力。
+这些功能可能受影响。已修改过的应用可使用完整官方备份恢复原签名身份。
 
 ## 快速开始
 
 ### 1. 选择二进制
 
-`dist/` 包含：
+本次 GitHub Release 仅含源码。按下文命令构建后，`dist/` 可包含：
 
 ```text
 codex-speed-patch-darwin-arm64
@@ -141,27 +141,27 @@ dist/codex-speed-patch-darwin-arm64 status \
 - `unknown`：当前版本不符合安全补丁规则。
 - `restored`：manifest 记录应用已经回滚。
 
-### 3. macOS 隔离测试
+### 3. macOS 隔离副本测试
 
 ```bash
-cp -cR "/Applications/ChatGPT.app" "/path/to/ChatGPT-Speed-Test.app"
+# 从未补丁的官方签名应用复制
+cp -cR "/Applications/ChatGPT.app" "/private/tmp/Codex-Speed-Test.app"
 
-dist/codex-speed-patch-darwin-arm64 repair \
+codex-speed-patch repair \
   --allow-macos-test \
-  --app "/path/to/ChatGPT-Speed-Test.app" \
+  --app "/private/tmp/Codex-Speed-Test.app" \
   --restart=never
 ```
 
-### 4. macOS 正式应用
+测试模式仅允许临时目录中的副本；即使副本保留官方签名，也会先完整备份，再执行 ad-hoc 重签。官方签名应用不支持 CLI 原位补丁。
+
+### 4. 恢复已修改的 macOS 应用
 
 ```bash
-dist/codex-speed-patch-darwin-arm64 repair \
-  --allow-macos-production \
-  --app "/Applications/ChatGPT.app" \
-  --restart=deferred-auto
+codex-speed-patch restore --app "/Applications/ChatGPT.app"
 ```
 
-正式修改前会创建完整备份：
+仅当 manifest 记录了备份时，`restore` 才能恢复。先前版本创建的完整备份通常位于：
 
 ```text
 ~/.codex/patches/speed-mode/backups/<APP_VERSION>-<ASAR_HASH>/ChatGPT.app
@@ -182,7 +182,7 @@ dist/codex-speed-patch-darwin-arm64 repair \
   --binary ~/.codex/patches/speed-mode/bin/codex-speed-patch
 ```
 
-安装器会在 `~/.codex/hooks.json` 中添加：
+安装器会在 `~/.codex/hooks.json` 中添加以下 Hook；macOS 官方签名应用不应安装自动补丁 Hook：
 
 - `SessionStart`：检测 Codex 更新并重新应用补丁。
 - `Stop`：当前轮次完成后调度一次延迟重启。
@@ -206,11 +206,11 @@ codex-speed-patch status
 # 自动检测并修复
 codex-speed-patch repair
 
-# macOS 正式应用
+# macOS 官方签名应用会被预检拒绝
 codex-speed-patch repair --allow-macos-production --restart=deferred-auto
 
-# macOS 隔离副本
-codex-speed-patch repair --allow-macos-test --app "/path/to/Test.app"
+# 临时目录中的 macOS 隔离副本允许完整备份和 ad-hoc 重签
+codex-speed-patch repair --allow-macos-test --app "/private/tmp/Test.app"
 
 # 恢复备份
 codex-speed-patch restore --app "/Applications/ChatGPT.app"
@@ -236,7 +236,7 @@ codex-speed-patch restore \
   --app "/Applications/ChatGPT.app"
 ```
 
-存在完整 macOS `.app` 备份时，恢复流程会克隆官方备份，将补丁应用移动到暂存路径，原子启用官方应用，验证官方签名，最后删除暂存的补丁应用。
+manifest 记录完整 macOS `.app` 备份时，恢复流程会克隆官方备份，将补丁应用移动到暂存路径，启用官方应用，验证官方签名，最后删除暂存的补丁应用。
 
 同时删除自动维护 hook：
 
@@ -249,10 +249,9 @@ codex-speed-patch remove-hook
 ### macOS
 
 - 提供 Apple Silicon 和 Intel 构建。
-- 正式应用需要 `--allow-macos-production`。
-- 隔离测试需要 `--allow-macos-test`。
-- 正式修改前创建完整 APFS 应用备份。
-- 修改后执行 ad-hoc 深度签名。
+- 带有 TeamIdentifier 的官方签名应用在修改前被拒绝。
+- `--allow-macos-production` 与 `--allow-macos-test` 仅控制路径范围；临时隔离副本仍需完整备份和重签。
+- 已有完整 APFS 应用备份可用于恢复原签名版本。
 
 ### Windows
 
@@ -285,7 +284,7 @@ GOOS=windows GOARCH=amd64 go build -o dist/codex-speed-patch-windows-amd64.exe .
 GOOS=windows GOARCH=arm64 go build -o dist/codex-speed-patch-windows-arm64.exe ./cmd/codex-speed-patch
 ```
 
-发布文件的 SHA-256 位于 [CHECKSUMS.txt](CHECKSUMS.txt)。
+[CHECKSUMS.txt](CHECKSUMS.txt) 仅记录 `v0.1.0` 的历史二进制校验值，不适用于本次仅含源码的 `v0.1.1` Release。
 
 ## 状态文件
 
@@ -304,7 +303,7 @@ GOOS=windows GOARCH=arm64 go build -o dist/codex-speed-patch-windows-arm64.exe .
 ## 已知限制
 
 - Codex 前端结构变化后，旧语义规则可能返回 `unknown`。
-- ad-hoc 签名不能替代 OpenAI Developer ID 身份。
+- ad-hoc 签名不能替代 OpenAI Developer ID 身份；官方签名的 macOS 应用不支持原位补丁。
 - 自动更新程序本身可能依赖官方签名。
 - 多窗口或并行任务期间重启会影响整个 Codex 应用。
 - API 服务端必须实际接受所选 `service_tier`；显示按钮不代表上游一定支持该档位。

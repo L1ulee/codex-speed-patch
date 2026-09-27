@@ -119,6 +119,9 @@ func (s Service) Repair(sessionID string, markRestart bool) (*Result, error) {
 		_ = state.Save(manifestPath, manifest)
 		return nil, errors.New(manifest.LastError)
 	case asar.StatusOriginal:
+		if err := platform.Preflight(inst, s.AllowMacOSTest); err != nil {
+			return nil, err
+		}
 		if inst.PackageKind == "appimage-mounted" {
 			manifest.Status = "unsupported-package"
 			manifest.LastError = "mounted AppImage is immutable; use an extracted or repacked AppImage"
@@ -131,7 +134,7 @@ func (s Service) Repair(sessionID string, markRestart bool) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	backupDir, err := createBackup(s.CodexHome, inst, originalHash, s.AllowMacOSProduction)
+	backupDir, err := createBackup(s.CodexHome, inst, originalHash, runtime.GOOS == "darwin")
 	if err != nil {
 		return nil, err
 	}

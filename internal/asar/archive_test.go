@@ -1,6 +1,7 @@
 package asar
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -45,6 +46,37 @@ func TestPatchCopy(t *testing.T) {
 	}
 	if patchedProbe.Status != StatusPatched {
 		t.Fatalf("expected patched, got %s", patchedProbe.Status)
+	}
+	entries := patched.Entries()
+	patchedData, err := patched.ReadEntry(entries[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(patchedData, []byte(`!u&&(!a||!!c&&c?.requirements?.featureRequirements?.fast_mode!==!1)`)) {
+		t.Fatal("patch did not preserve the authenticated requirements check")
+	}
+}
+
+func TestProbeRecognizesPreviousAndCurrentPatches(t *testing.T) {
+	for name, expression := range map[string]string{
+		"previous": `!u&&(!a||c?.requirements?.featureRequirements?.fast_mode!==!1)`,
+		"current":  `!u&&(!a||!!c&&c?.requirements?.featureRequirements?.fast_mode!==!1)`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "app.asar")
+			writeFixture(t, path, []byte("let d="+expression+";"))
+			archive, err := Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			probe, err := archive.Probe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if probe.Status != StatusPatched {
+				t.Fatalf("expected patched, got %s", probe.Status)
+			}
+		})
 	}
 }
 
