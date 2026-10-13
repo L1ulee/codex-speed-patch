@@ -86,6 +86,52 @@ func TestMacSignStepsRejectsHelperSymlinkOutsideApp(t *testing.T) {
 	}
 }
 
+func TestMacSigningIncludesEntireSparkleChain(t *testing.T) {
+	app := filepath.Join(t.TempDir(), "Test.app")
+	frameworks := filepath.Join(app, "Contents", "Frameworks")
+	for _, path := range []string{"Codex Framework.framework/Helpers/Codex (Renderer).app", "Sparkle.framework/XPCServices/Installer.xpc", "Sparkle.framework/XPCServices/Downloader.xpc", "Sparkle.framework/Updater.app"} {
+		if err := os.MkdirAll(filepath.Join(frameworks, path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(frameworks, "Sparkle.framework", "Autoupdate"), nil, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	steps, err := macSignSteps(&Installation{AppPath: app}, "/tmp/entitlements.plist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	positions := map[string]int{}
+	for i, args := range steps {
+		positions[args[len(args)-1]] = i
+	}
+	sparkle := filepath.Join(frameworks, "Sparkle.framework")
+	frameworkIndex, ok := positions[sparkle]
+	if !ok {
+		t.Fatal("Sparkle framework is omitted from signing")
+	}
+	for _, relative := range []string{"Autoupdate", "Updater.app", "XPCServices/Installer.xpc", "XPCServices/Downloader.xpc"} {
+		i, ok := positions[filepath.Join(sparkle, relative)]
+		if !ok || i >= frameworkIndex {
+			t.Fatalf("Sparkle child %s was not signed before the framework", relative)
+		}
+	}
+	if frameworkIndex >= positions[app] {
+		t.Fatal("Sparkle must be signed before the outer app")
+	}
+}
+
+func TestAdHocEntitlementsKeepPermissionsWithoutDeveloperIdentity(t *testing.T) {
+	input := map[string]any{"com.apple.developer.team-identifier": "TEAM", "com.apple.developer.aps-environment": "production", "com.apple.application-identifier": "TEAM.app", "keychain-access-groups": []string{"TEAM.app"}, "com.apple.security.app-sandbox": false, "com.apple.security.network.client": true}
+	result := adHocEntitlements(input)
+	if len(result) != 2 || result["com.apple.security.network.client"] != true || result["com.apple.security.app-sandbox"] != false {
+		t.Fatalf("ad-hoc permissions = %v", result)
+	}
+	if len(input) != 6 {
+		t.Fatal("original entitlement dictionary was modified")
+	}
+}
+
 func TestSignedMacTestCopyMustResolveInsideTemporaryDirectory(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("macOS path check")

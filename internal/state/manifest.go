@@ -22,6 +22,7 @@ type Manifest struct {
 	Platform           string    `json:"platform"`
 	PackageKind        string    `json:"package_kind"`
 	TargetAsset        string    `json:"target_asset,omitempty"`
+	TargetAssets       []string  `json:"target_assets,omitempty"`
 	OriginalAsarSHA256 string    `json:"original_asar_sha256,omitempty"`
 	PatchedAsarSHA256  string    `json:"patched_asar_sha256,omitempty"`
 	BackupDir          string    `json:"backup_dir,omitempty"`

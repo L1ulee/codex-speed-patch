@@ -16,7 +16,7 @@ func TestPatchCopy(t *testing.T) {
 	source := filepath.Join(dir, "app.asar")
 	destination := filepath.Join(dir, "patched.asar")
 	content := []byte(`let a=true,u=false,c={requirements:{featureRequirements:{fast_mode:true}}},d=a&&!u&&c!=null&&c?.requirements?.featureRequirements?.fast_mode!==!1;`)
-	writeFixture(t, source, content)
+	writeFixture(t, source, append(content, []byte(requestFixture)...))
 
 	archive, err := Open(source)
 	if err != nil {
@@ -73,8 +73,8 @@ func TestProbeRecognizesPreviousAndCurrentPatches(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if probe.Status != StatusPatched {
-				t.Fatalf("expected patched, got %s", probe.Status)
+			if probe.Status != StatusPartial {
+				t.Fatalf("expected partial for legacy UI-only patch, got %s", probe.Status)
 			}
 		})
 	}

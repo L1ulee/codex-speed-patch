@@ -18,7 +18,7 @@ import (
 	"codex-speed-patch/internal/state"
 )
 
-const RuleVersion = "speed-mode-api-v1"
+const RuleVersion = "speed-mode-api-v2"
 const CreatedDate = "2026-09-06"
 
 type Service struct {
@@ -89,6 +89,8 @@ func (s Service) Repair(sessionID string, markRestart bool) (*Result, error) {
 	if manifest == nil {
 		manifest = &state.Manifest{SchemaVersion: state.SchemaVersion, PatchRuleVersion: RuleVersion, CreatedDate: CreatedDate}
 	}
+	sameInstallation := manifest.AppPath == inst.AppPath && manifest.AppVersion == inst.Version
+	originalBackup := manifest.BackupDir
 	manifest.AppPath = inst.AppPath
 	manifest.AppVersion = inst.Version
 	manifest.CLIPath = inst.CLIPath
@@ -102,6 +104,12 @@ func (s Service) Repair(sessionID string, markRestart bool) (*Result, error) {
 
 	switch probe.Status {
 	case asar.StatusPatched:
+		if err := platform.Verify(inst); err != nil {
+			return nil, err
+		}
+		if err := platform.VerifyUpdateSigning(inst); err != nil {
+			return nil, fmt.Errorf("patch source is complete but update signing chain needs repair: %w", err)
+		}
 		hash, hashErr := asar.FileSHA256(inst.AsarPath)
 		if hashErr != nil {
 			return nil, hashErr
@@ -115,10 +123,10 @@ func (s Service) Repair(sessionID string, markRestart bool) (*Result, error) {
 		return &Result{Changed: false, Status: probe.Status, Manifest: manifest}, nil
 	case asar.StatusUnknown:
 		manifest.Status = string(asar.StatusUnknown)
-		manifest.LastError = "no unique supported speed-mode gate was found"
+		manifest.LastError = "complete supported speed-mode rules were not found"
 		_ = state.Save(manifestPath, manifest)
 		return nil, errors.New(manifest.LastError)
-	case asar.StatusOriginal:
+	case asar.StatusOriginal, asar.StatusPartial:
 		if err := platform.Preflight(inst, s.AllowMacOSTest); err != nil {
 			return nil, err
 		}
@@ -173,9 +181,14 @@ func (s Service) Repair(sessionID string, markRestart bool) (*Result, error) {
 	}
 	manifest.PatchRuleVersion = RuleVersion
 	manifest.TargetAsset = patchResult.TargetPath
+	manifest.TargetAssets = patchResult.TargetPaths
 	manifest.OriginalAsarSHA256 = originalHash
 	manifest.PatchedAsarSHA256 = finalHash
 	manifest.BackupDir = backupDir
+	if probe.Status == asar.StatusPartial && sameInstallation && originalBackup != "" {
+		// Upgrading a UI-only patch must not discard the original rollback copy.
+		manifest.BackupDir = originalBackup
+	}
 	manifest.Status = string(asar.StatusPatched)
 	manifest.PatchedAt = now
 	manifest.LastError = ""
@@ -207,6 +220,9 @@ func (s Service) Restore() error {
 	inst, err := platform.Detect(manifest.AppPath)
 	if err != nil {
 		return err
+	}
+	if manifest.AppVersion == "" || inst.Version != manifest.AppVersion {
+		return fmt.Errorf("backup version %q differs from installed version %q; restore skipped", manifest.AppVersion, inst.Version)
 	}
 	if err := restoreBackup(inst, manifest.BackupDir); err != nil {
 		return err

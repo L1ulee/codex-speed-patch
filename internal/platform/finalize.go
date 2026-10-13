@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,13 +9,6 @@ import (
 	"runtime"
 	"strings"
 )
-
-const macSigningEntitlements = `<?xml version="1.0" encoding="UTF-8"?>
-<plist version="1.0"><dict>
-<key>com.apple.security.cs.disable-library-validation</key><true/>
-<key>com.apple.security.cs.allow-jit</key><true/>
-<key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
-</dict></plist>`
 
 func Finalize(inst *Installation, archiveHeaderSHA256 string) error {
 	switch runtime.GOOS {
@@ -33,7 +27,7 @@ func Finalize(inst *Installation, archiveHeaderSHA256 string) error {
 		if err := updateFrameworkASARIntegrity(inst, oldIntegrity, newIntegrity); err != nil {
 			return err
 		}
-		entitlementsPath, err := writeMacSigningEntitlements()
+		entitlementsPath, err := writeSigningEntitlements(inst.AppPath, []string{"com.apple.security.cs.disable-library-validation", "com.apple.security.cs.allow-jit", "com.apple.security.cs.allow-unsigned-executable-memory"})
 		if err != nil {
 			return err
 		}
@@ -42,8 +36,9 @@ func Finalize(inst *Installation, archiveHeaderSHA256 string) error {
 		if err != nil {
 			return err
 		}
-		for index, args := range steps {
-			if index < len(steps)-2 {
+		helperRoot := filepath.Join(inst.AppPath, "Contents", "Frameworks", "Codex Framework.framework", "Helpers") + string(os.PathSeparator)
+		for _, args := range steps {
+			if strings.HasPrefix(args[len(args)-1], helperRoot) {
 				helperEntitlements, err := writeHelperSigningEntitlements(args[len(args)-1])
 				if err != nil {
 					return err
@@ -55,7 +50,10 @@ func Finalize(inst *Installation, archiveHeaderSHA256 string) error {
 				return fmt.Errorf("re-sign %s: %s", args[len(args)-1], strings.TrimSpace(string(output)))
 			}
 		}
-		return Verify(inst)
+		if err := Verify(inst); err != nil {
+			return err
+		}
+		return VerifyUpdateSigning(inst)
 	case "windows", "linux":
 		return Verify(inst)
 	default:
@@ -76,14 +74,23 @@ func macSignSteps(inst *Installation, entitlementsPath string) ([][]string, erro
 		}
 		steps = append(steps, []string{"--force", "--sign", "-", "--preserve-metadata=identifier,flags,runtime", helper})
 	}
-	steps = append(steps,
-		[]string{"--force", "--sign", "-", "--preserve-metadata=identifier,flags,runtime", framework},
-		[]string{"--force", "--sign", "-", "--preserve-metadata=identifier,flags,runtime", "--entitlements", entitlementsPath, inst.AppPath},
-	)
+	steps = append(steps, []string{"--force", "--sign", "-", "--preserve-metadata=identifier,flags,runtime", framework})
+	updaterTargets, err := macUpdaterTargets(inst)
+	if err != nil {
+		return nil, err
+	}
+	for _, target := range updaterTargets {
+		steps = append(steps, []string{"--force", "--sign", "-", "--preserve-metadata=identifier,flags,runtime,entitlements", target})
+	}
+	steps = append(steps, []string{"--force", "--sign", "-", "--preserve-metadata=identifier,flags,runtime", "--entitlements", entitlementsPath, inst.AppPath})
 	return steps, nil
 }
 
 func writeHelperSigningEntitlements(helper string) (string, error) {
+	return writeSigningEntitlements(helper, []string{"com.apple.security.cs.disable-library-validation"})
+}
+
+func writeSigningEntitlements(target string, additions []string) (string, error) {
 	file, err := os.CreateTemp("", "codex-speed-patch-helper-entitlements-*.plist")
 	if err != nil {
 		return "", fmt.Errorf("create helper entitlements: %w", err)
@@ -93,37 +100,112 @@ func writeHelperSigningEntitlements(helper string) (string, error) {
 		os.Remove(path)
 		return "", err
 	}
-	if output, err := exec.Command("/usr/bin/codesign", "-d", "--entitlements", path, "--xml", helper).CombinedOutput(); err != nil {
+	if output, err := exec.Command("/usr/bin/codesign", "-d", "--entitlements", path, "--xml", target).CombinedOutput(); err != nil {
 		os.Remove(path)
 		return "", fmt.Errorf("read helper entitlements: %s", strings.TrimSpace(string(output)))
 	}
-	command := "Set :com.apple.security.cs.disable-library-validation true"
-	if err := exec.Command("/usr/libexec/PlistBuddy", "-c", "Print :com.apple.security.cs.disable-library-validation", path).Run(); err != nil {
-		command = "Add :com.apple.security.cs.disable-library-validation bool true"
-	}
-	if output, err := exec.Command("/usr/libexec/PlistBuddy", "-c", command, path).CombinedOutput(); err != nil {
+	data, err := exec.Command("/usr/bin/plutil", "-convert", "json", "-o", "-", path).Output()
+	if err != nil {
 		os.Remove(path)
-		return "", fmt.Errorf("update helper entitlements: %s", strings.TrimSpace(string(output)))
+		return "", fmt.Errorf("decode signing entitlements: %w", err)
+	}
+	var original map[string]any
+	if err = json.Unmarshal(data, &original); err != nil {
+		os.Remove(path)
+		return "", err
+	}
+	filtered := adHocEntitlements(original)
+	for _, key := range additions {
+		filtered[key] = true
+	}
+	data, err = json.Marshal(filtered)
+	if err != nil {
+		os.Remove(path)
+		return "", err
+	}
+	if err = os.WriteFile(path, data, 0o600); err != nil {
+		os.Remove(path)
+		return "", err
+	}
+	if output, err := exec.Command("/usr/bin/plutil", "-convert", "xml1", path).CombinedOutput(); err != nil {
+		os.Remove(path)
+		return "", fmt.Errorf("encode signing entitlements: %s", strings.TrimSpace(string(output)))
 	}
 	return path, nil
 }
 
-func writeMacSigningEntitlements() (string, error) {
-	file, err := os.CreateTemp("", "codex-speed-patch-entitlements-*.plist")
+func adHocEntitlements(original map[string]any) map[string]any {
+	filtered := map[string]any{}
+	for key, value := range original {
+		// Developer identity grants are not valid in an ad-hoc signature (AMFI
+		// -424). Keep ordinary application permissions and sandbox settings.
+		if strings.HasPrefix(key, "com.apple.developer.") || key == "com.apple.application-identifier" || key == "keychain-access-groups" {
+			continue
+		}
+		filtered[key] = value
+	}
+	return filtered
+}
+
+func macUpdaterTargets(inst *Installation) ([]string, error) {
+	root := filepath.Join(inst.AppPath, "Contents", "Frameworks", "Sparkle.framework")
+	if _, err := os.Stat(root); os.IsNotExist(err) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	xpcs, err := filepath.Glob(filepath.Join(root, "XPCServices", "*.xpc"))
 	if err != nil {
-		return "", fmt.Errorf("create macOS signing entitlements: %w", err)
+		return nil, err
 	}
-	path := file.Name()
-	if _, err := file.WriteString(macSigningEntitlements); err != nil {
-		file.Close()
-		os.Remove(path)
-		return "", fmt.Errorf("write macOS signing entitlements: %w", err)
+	targets := append(xpcs, filepath.Join(root, "Updater.app"), filepath.Join(root, "Autoupdate"), root)
+	for _, target := range targets {
+		if !isWithinApp(inst.AppPath, target) {
+			return nil, fmt.Errorf("Sparkle target is missing or resolves outside app: %s", target)
+		}
 	}
-	if err := file.Close(); err != nil {
-		os.Remove(path)
-		return "", fmt.Errorf("close macOS signing entitlements: %w", err)
+	return targets, nil
+}
+
+// A valid resource seal does not establish that Sparkle's helper connection
+// accepts the host. Check their signing identities as well (Sparkle error 4005).
+func VerifyUpdateSigning(inst *Installation) error {
+	if runtime.GOOS != "darwin" {
+		return nil
 	}
-	return path, nil
+	targets, err := macUpdaterTargets(inst)
+	if err != nil {
+		return err
+	}
+	identity := func(path string) (string, error) {
+		output, err := exec.Command("/usr/bin/codesign", "-dv", "--verbose=4", path).CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("inspect update signer: %w", err)
+		}
+		for _, line := range strings.Split(string(output), "\n") {
+			if line == "Signature=adhoc" {
+				return "adhoc", nil
+			}
+			if strings.HasPrefix(line, "TeamIdentifier=") && line != "TeamIdentifier=not set" {
+				return line, nil
+			}
+		}
+		return "", fmt.Errorf("unrecognized update signing identity: %s", path)
+	}
+	host, err := identity(inst.AppPath)
+	if err != nil {
+		return err
+	}
+	for _, target := range targets {
+		signer, err := identity(target)
+		if err != nil {
+			return err
+		}
+		if signer != host {
+			return fmt.Errorf("Sparkle signing identity differs from host: %s", target)
+		}
+	}
+	return nil
 }
 
 func Preflight(inst *Installation, allowSignedTestCopy bool) error {

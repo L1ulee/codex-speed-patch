@@ -8,15 +8,18 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
+	"codex-speed-patch/internal/deploy"
 	"codex-speed-patch/internal/hook"
 	"codex-speed-patch/internal/patch"
+	"codex-speed-patch/internal/platform"
 	"codex-speed-patch/internal/restart"
 	"codex-speed-patch/internal/state"
 )
 
-const version = "0.1.1"
+const version = "0.1.2"
 
 type hookInput struct {
 	SessionID string `json:"session_id"`
@@ -47,7 +50,27 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		return printJSON(result)
+		deployment, err := deploy.Load(*codexHome)
+		if err != nil {
+			return err
+		}
+		if deployment != nil {
+			inst, err := platform.Detect(*appPath)
+			if err != nil {
+				return err
+			}
+			actual, err := filepath.Abs(inst.AppPath)
+			if err != nil {
+				return err
+			}
+			if deployment.AppPath != actual {
+				deployment = nil
+			}
+		}
+		return printJSON(struct {
+			*patch.Result
+			Deployment *deploy.Record `json:"deployment,omitempty"`
+		}{result, deployment})
 	case "apply", "repair":
 		flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 		appPath, codexHome := commonFlags(flags)
@@ -55,7 +78,7 @@ func run(args []string) error {
 		sessionIDFlag := flags.String("session-id", "", "session to reopen after restart")
 		restartMode := flags.String("restart", "never", "restart policy: never or deferred-auto")
 		allowMacOSTest := flags.Bool("allow-macos-test", false, "allow patching an isolated macOS app copy outside Applications")
-		allowMacOSProduction := flags.Bool("allow-macos-production", false, "allow patching a macOS app inside Applications after explicit approval")
+		allowMacOSProduction := flags.Bool("allow-macos-production", false, "replace a macOS app with a verified patched bundle, backing up and restarting it")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -69,11 +92,36 @@ func run(args []string) error {
 		if *restartMode != "never" && !markRestart {
 			return fmt.Errorf("invalid restart policy: %s", *restartMode)
 		}
+		if runtime.GOOS == "darwin" && *allowMacOSProduction && !*hookMode {
+			service := deploy.Service{CodexHome: *codexHome, AppPath: *appPath, AllowTestPath: *allowMacOSTest}
+			result, err := service.Prepare(sessionID)
+			if err != nil {
+				return err
+			}
+			if result.Deployment != nil {
+				result, err = service.Schedule(result.Deployment.ID)
+				if err != nil {
+					return err
+				}
+			}
+			return printJSON(result)
+		}
 		result, err := (patch.Service{CodexHome: *codexHome, AppPath: *appPath, AllowMacOSTest: *allowMacOSTest, AllowMacOSProduction: *allowMacOSProduction}).Repair(sessionID, markRestart)
 		if err != nil {
 			return err
 		}
 		return printJSON(result)
+	case "deploy-worker":
+		flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
+		_, codexHome := commonFlags(flags)
+		attemptID := flags.String("attempt-id", "", "deployment attempt identifier")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		time.Sleep(5 * time.Second)
+		err := (deploy.Service{CodexHome: *codexHome}).RunWorker(*attemptID)
+		deploy.Unload(*attemptID)
+		return err
 	case "restore":
 		flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 		appPath, codexHome := commonFlags(flags)

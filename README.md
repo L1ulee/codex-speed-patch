@@ -4,23 +4,33 @@
 
 这是一个版本感知的 Codex Desktop 补丁器，用于在 API/custom model provider 模式下显示 Codex 原生 Speed 速度选择器。
 
-补丁器复用 Codex 已有的模型目录、`service_tiers`、`service_tier` 配置写入和请求传递流程，仅修改桌面端把 Speed 控件限制为 ChatGPT 登录模式的能力判断。
+补丁器复用 Codex 已有的模型目录、`service_tiers`、`service_tier` 配置写入和请求传递流程，补齐 API 登录下 Speed 控件、保存档位读取及续跑/派生线程的权限路径。
 
 ## 当前状态
 
-- 补丁器版本：`0.1.1`
-- macOS 实测日期：`2026-09-28`
-- 已测试 Codex Desktop：`26.924.22138`
+- 补丁器版本：`0.1.2`（未发布）
+- macOS 实测日期：`2026-10-13`
+- 已测试 Codex Desktop：`26.1007.30912`
 
-隔离副本和正式应用均通过以下检查：
+本版隔离副本已通过以下检查：
 
 - Codex CLI/app-server 初始化成功。
 - 主窗口完成 `ready-to-show`。
-- 模型选择器可以打开。
-- API/custom provider 下原生 Fast 控件可见且可切换（人工确认）。
+- 原生 Speed 保存与读取函数通过 API 登录、档位映射和策略关闭的运行时对照测试。
+- 本地假上游捕获首轮、推理续跑和桌面派生线程的 `service_tier: priority`。
 - `codesign --verify --deep --strict` 通过。
+- 完整回滚恢复原始 ASAR 与官方签名。
 
-本次正式应用采用已验证隔离副本离线替换，不是补丁器 CLI 对官方签名应用的原位修改。真实模型请求、Keychain、推送和自动更新尚未验证。
+`0.1.2` 补丁已通过完整备份和整包替换部署到正式应用，用户确认 Speed/Fast 控件出现且可切换。CLI 的自动整包替换流程另在隔离副本中验证；自主子代理工具、真实上游、Keychain、推送和实际官方更新安装仍待端到端验证。
+
+## 0.1.2 修复（未发布）
+
+- 补丁规则升级为 `speed-mode-api-v2`：旧版仅打开控件的补丁显示为 `partial`，升级时同时修复保存档位、队列和续跑/派生线程的读取路径。Fast 使用模型目录定义的真实 ID（例如 `priority`），不强制重命名为 `fast`。
+- 兼容 `26.1007.30912` 的独立 Fast/Ultrafast 权限，保留明确关闭档位的策略检查。
+- Sparkle 的 Autoupdate、Updater、XPC 服务和 Framework 从内到外重签，与宿主保持一致，修复混合 Team ID 引发的安装连接 4005。保留更新公钥和更新包验证；仅移除不适用于 ad-hoc 的开发者身份 entitlements。
+- 旧 manifest 的备份版本与已安装版本不同会停止恢复，避免将官方更新回退成旧版应用。
+- 已通过隔离包启动、原生组件请求函数对照、ASAR 完整性及更新签名链检查；本地假上游已捕获 Speed 保存后首轮、推理续跑及桌面派生线程均携带 `service_tier: priority`。自主子代理工具与官方更新安装的端到端复测仍待完成。
+- 手动执行 `repair --allow-macos-production` 时，CLI 自动备份、生成补丁包、调度一次性整包替换并重启验证；失败时恢复原应用和原 manifest。Hook 沿用原有处理流程，不触发整包部署。
 
 ## 工作原理
 
@@ -41,22 +51,22 @@ Codex 模型目录已经可以声明速度档位：
 补丁器按以下流程工作：
 
 1. 解析 `app.asar` 文件索引。
-2. 在 JavaScript 资源中查找唯一的速度权限语义表达式。
-3. 使用等长表达式替换，保持 ASAR 文件偏移不变。
-4. 重算目标文件 SHA-256 和 ASAR 分块哈希。
-5. 更新 ASAR Header JSON 中的完整性记录。
+2. 在 JavaScript 资源中核对控件、请求权限及保存档位读取规则；目标缺失或不唯一时终止。
+3. 保留原始数据区（包括共享内容范围），追加变更资源并重建它们的索引。
+4. 重算每个变更资源的 SHA-256 和 ASAR 分块哈希。
+5. 更新 Header JSON 的偏移、大小和完整性记录，保留链接、unpacked 与未知元数据。
 6. macOS 上将 Header JSON SHA-256 写入 `ElectronAsarIntegrity`，并同步 Framework 的 `__asar_integrity` 摘要。
-7. 按 Helper、Framework、外层应用的顺序重新签名并验证。
+7. 按 Electron Helper/Framework、Sparkle 辅助程序/Framework、外层应用的顺序重新签名，验证资源签名和更新链身份。
 
 ## 安全机制
 
-- 必须且只能找到一个受支持的语义目标。
+- 控件与请求权限规则各匹配一次，全部保存档位读取函数均被覆盖。
 - 无目标或多个候选目标时终止修改。
-- 替换表达式必须与原表达式等长。
+- 仅更新匹配规则所在资源的索引，其余原始数据保持完整。
 - 修改前验证文件哈希和全部分块哈希。
 - 修改后重新打开 ASAR，并确认状态为 `patched`。
 - 每个 Codex 版本使用独立备份目录。
-- macOS 上在写入前检查签名身份和路径，拒绝修改保留 TeamIdentifier 的正式应用。
+- macOS 上在写入前检查签名身份和路径；正式应用通过完整验证后的补丁包替换，官方签名预检保留在隔离修补流程中。
 - 对允许补丁的 macOS 应用，修改前使用 APFS clone 备份整个 `.app`。
 - 未知版本不会进行猜测性修改。
 - 自动重启只请求正常退出，不使用强制终止。
@@ -64,13 +74,17 @@ Codex 模型目录已经可以声明速度档位：
 
 ## macOS 重要说明
 
-修改 `.app` 内的资源会破坏 OpenAI 原始 Developer ID 签名。本工具只能执行本地 ad-hoc 重签名。补丁器仍会在预检阶段拒绝对带 TeamIdentifier 的官方应用原位修改；本次正式应用使用隔离副本离线替换，并保留了原签名完整备份。
+补丁包使用本地 ad-hoc 签名；完整官方备份保留 OpenAI 原始 Developer ID。正式部署会在临时目录中调用现有补丁和签名逻辑，验证后将整个应用包切换到原来的正式路径。
 
-`--allow-macos-production` 仅放行生产路径检查，不能绕过官方签名预检：
+手动部署正式应用：
 
 ```bash
---allow-macos-production
+codex-speed-patch repair --allow-macos-production --app "/Applications/ChatGPT.app"
 ```
+
+命令返回 `status: scheduled` 表示已调度；随后独立的一次性任务请求选定进程退出，等待 Helper 退出，替换应用并重启。`status` 输出中的 `deployment.status` 为 `deployed` 时表示包验证与启动检查已完成；`failed` 时可查看 `deployment.error` 和 `rolled_back`。应用在准备后被官方更新时会取消替换，保留新版本。
+
+正式整包部署必需退出与启动应用，`--restart` 仅控制原有原位补丁流程。已经完整补丁且签名链正常的应用返回 `changed: false`，不重复替换或重启。备份和部署日志保存在所选 `--codex-home` 下，用户配置与认证不被复制或改写。
 
 隔离副本测试必须显式传入：
 
@@ -110,7 +124,7 @@ ad-hoc 签名不能保留 OpenAI Developer ID 和原始 TeamIdentifier，可能�
 
 ### 1. 选择二进制
 
-本次 GitHub Release 仅含源码。按下文命令构建后，`dist/` 可包含：
+GitHub 的 `v0.1.1` Release 仅含源码。此前六平台 `0.1.2` 构建保留在 `dist/v0.1.2/`；本轮包含自动整包替换的 Apple Silicon 构建位于 `dist/v0.1.2-direct-replace/`，使用同目录的 `SHA256SUMS.txt` 核对。
 
 ```text
 codex-speed-patch-darwin-arm64
@@ -124,13 +138,13 @@ codex-speed-patch-windows-arm64.exe
 macOS 示例：
 
 ```bash
-chmod +x dist/codex-speed-patch-darwin-arm64
+chmod +x dist/v0.1.2-direct-replace/codex-speed-patch-darwin-arm64
 ```
 
 ### 2. 检查状态
 
 ```bash
-dist/codex-speed-patch-darwin-arm64 status \
+dist/v0.1.2-direct-replace/codex-speed-patch-darwin-arm64 status \
   --app "/Applications/ChatGPT.app"
 ```
 
@@ -138,6 +152,7 @@ dist/codex-speed-patch-darwin-arm64 status \
 
 - `original`：尚未应用补丁。
 - `patched`：补丁已生效。
+- `partial`：仅有旧版部分补丁，完整请求规则尚未覆盖。
 - `unknown`：当前版本不符合安全补丁规则。
 - `restored`：manifest 记录应用已经回滚。
 
@@ -153,7 +168,16 @@ codex-speed-patch repair \
   --restart=never
 ```
 
-测试模式仅允许临时目录中的副本；即使副本保留官方签名，也会先完整备份，再执行 ad-hoc 重签。官方签名应用不支持 CLI 原位补丁。
+测试模式仅允许临时目录中的副本；即使副本保留官方签名，也会先完整备份，再执行 ad-hoc 重签。
+
+整包替换测试可以同时传入两个范围参数及独立状态目录：
+
+```bash
+codex-speed-patch repair --allow-macos-production --allow-macos-test \
+  --app "/private/tmp/Codex-Speed-Test.app" --codex-home "/private/tmp/Codex-Speed-Test-State"
+```
+
+这会完整替换指定测试包，并用独立浏览器资料和空认证配置启动；不会复用正式应用的会话。
 
 ### 4. 恢复已修改的 macOS 应用
 
@@ -206,8 +230,8 @@ codex-speed-patch status
 # 自动检测并修复
 codex-speed-patch repair
 
-# macOS 官方签名应用会被预检拒绝
-codex-speed-patch repair --allow-macos-production --restart=deferred-auto
+# macOS 正式应用：备份、整包替换并重启
+codex-speed-patch repair --allow-macos-production
 
 # 临时目录中的 macOS 隔离副本允许完整备份和 ad-hoc 重签
 codex-speed-patch repair --allow-macos-test --app "/private/tmp/Test.app"
@@ -236,7 +260,7 @@ codex-speed-patch restore \
   --app "/Applications/ChatGPT.app"
 ```
 
-manifest 记录完整 macOS `.app` 备份时，恢复流程会克隆官方备份，将补丁应用移动到暂存路径，启用官方应用，验证官方签名，最后删除暂存的补丁应用。
+manifest 记录完整 macOS `.app` 备份且版本与安装版本一致时，恢复流程会克隆官方备份，将补丁应用移动到暂存路径，启用官方应用，验证官方签名，最后删除暂存的补丁应用。
 
 同时删除自动维护 hook：
 
@@ -249,8 +273,8 @@ codex-speed-patch remove-hook
 ### macOS
 
 - 提供 Apple Silicon 和 Intel 构建。
-- 带有 TeamIdentifier 的官方签名应用在修改前被拒绝。
-- `--allow-macos-production` 与 `--allow-macos-test` 仅控制路径范围；临时隔离副本仍需完整备份和重签。
+- `--allow-macos-production` 为手动命令启用正式应用的整包替换流程。
+- 单独使用 `--allow-macos-test` 在临时副本内修补；同时传入两个参数可测试整包替换。
 - 已有完整 APFS 应用备份可用于恢复原签名版本。
 
 ### Windows
@@ -271,20 +295,22 @@ codex-speed-patch remove-hook
 
 要求 Go `1.24` 或更高版本。
 
+请求与新版权限的运行时回归测试还需要 Node.js；缺少 Node.js 时这些测试会明确跳过。
+
 ```bash
 go test ./...
 go vet ./...
 go build ./cmd/codex-speed-patch
 
-GOOS=darwin GOARCH=arm64 go build -o dist/codex-speed-patch-darwin-arm64 ./cmd/codex-speed-patch
-GOOS=darwin GOARCH=amd64 go build -o dist/codex-speed-patch-darwin-amd64 ./cmd/codex-speed-patch
-GOOS=linux GOARCH=amd64 go build -o dist/codex-speed-patch-linux-amd64 ./cmd/codex-speed-patch
-GOOS=linux GOARCH=arm64 go build -o dist/codex-speed-patch-linux-arm64 ./cmd/codex-speed-patch
-GOOS=windows GOARCH=amd64 go build -o dist/codex-speed-patch-windows-amd64.exe ./cmd/codex-speed-patch
-GOOS=windows GOARCH=arm64 go build -o dist/codex-speed-patch-windows-arm64.exe ./cmd/codex-speed-patch
+GOOS=darwin GOARCH=arm64 go build -o dist/v0.1.2/codex-speed-patch-darwin-arm64 ./cmd/codex-speed-patch
+GOOS=darwin GOARCH=amd64 go build -o dist/v0.1.2/codex-speed-patch-darwin-amd64 ./cmd/codex-speed-patch
+GOOS=linux GOARCH=amd64 go build -o dist/v0.1.2/codex-speed-patch-linux-amd64 ./cmd/codex-speed-patch
+GOOS=linux GOARCH=arm64 go build -o dist/v0.1.2/codex-speed-patch-linux-arm64 ./cmd/codex-speed-patch
+GOOS=windows GOARCH=amd64 go build -o dist/v0.1.2/codex-speed-patch-windows-amd64.exe ./cmd/codex-speed-patch
+GOOS=windows GOARCH=arm64 go build -o dist/v0.1.2/codex-speed-patch-windows-arm64.exe ./cmd/codex-speed-patch
 ```
 
-[CHECKSUMS.txt](CHECKSUMS.txt) 仅记录 `v0.1.0` 的历史二进制校验值，不适用于本次仅含源码的 `v0.1.1` Release。
+本地 `0.1.2` 产物的校验值位于 `dist/v0.1.2/SHA256SUMS.txt`。[CHECKSUMS.txt](CHECKSUMS.txt) 仅记录 `v0.1.0` 的历史二进制校验值。
 
 ## 状态文件
 
@@ -295,6 +321,8 @@ GOOS=windows GOARCH=arm64 go build -o dist/codex-speed-patch-windows-arm64.exe .
 ```
 
 - `manifest.json`：版本、补丁规则、哈希、备份和重启状态。
+- `deployment.json`：最近一次整包替换的状态、错误及回滚结果。
+- `deployments/`：各部署任务的原 manifest、一次性助手和日志。
 - `patch.lock`：补丁并发锁。
 - `restart.lock`：重启并发锁。
 - `backups/`：各 Codex 版本的回滚副本。
@@ -303,7 +331,7 @@ GOOS=windows GOARCH=arm64 go build -o dist/codex-speed-patch-windows-arm64.exe .
 ## 已知限制
 
 - Codex 前端结构变化后，旧语义规则可能返回 `unknown`。
-- ad-hoc 签名不能替代 OpenAI Developer ID 身份；官方签名的 macOS 应用不支持原位补丁。
+- 整包替换后的应用使用 ad-hoc 签名，依赖官方 Developer ID 的能力仍需验证。
 - 自动更新程序本身可能依赖官方签名。
 - 多窗口或并行任务期间重启会影响整个 Codex 应用。
 - API 服务端必须实际接受所选 `service_tier`；显示按钮不代表上游一定支持该档位。

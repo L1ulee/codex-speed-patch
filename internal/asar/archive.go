@@ -1,7 +1,6 @@
 package asar
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -14,7 +13,6 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
-	"strings"
 )
 
 const (
@@ -59,6 +57,7 @@ type ProbeStatus string
 const (
 	StatusOriginal ProbeStatus = "original"
 	StatusPatched  ProbeStatus = "patched"
+	StatusPartial  ProbeStatus = "partial"
 	StatusUnknown  ProbeStatus = "unknown"
 )
 
@@ -71,13 +70,16 @@ type Candidate struct {
 }
 
 type ProbeResult struct {
-	Status     ProbeStatus
-	Candidate  *Candidate
-	TargetPath string
+	Status      ProbeStatus
+	Candidate   *Candidate
+	Candidates  []Candidate
+	TargetPath  string
+	TargetPaths []string
 }
 
 type PatchResult struct {
 	TargetPath         string
+	TargetPaths        []string
 	OriginalFileHash   string
 	PatchedFileHash    string
 	PatchedArchiveHash string
@@ -174,56 +176,52 @@ func (a *Archive) ReadEntry(entry Entry) ([]byte, error) {
 }
 
 func (a *Archive) Probe() (*ProbeResult, error) {
-	var originals []Candidate
-	patchedCount := 0
-	patchedPath := ""
+	var report ruleReport
+	var paths []string
+	uiPath := ""
 	for _, entry := range a.Entries() {
-		if entry.Node.Unpacked || !strings.HasSuffix(strings.ToLower(entry.Path), ".js") || entry.Node.Size == 0 {
+		if !isJavaScript(entry) {
 			continue
 		}
 		data, err := a.ReadEntry(entry)
 		if err != nil {
 			return nil, err
 		}
-		for _, match := range gatePattern.FindAllSubmatchIndex(data, -1) {
-			if len(match) != 10 {
-				continue
-			}
-			dataVar1 := data[match[6]:match[7]]
-			dataVar2 := data[match[8]:match[9]]
-			if !bytes.Equal(dataVar1, dataVar2) {
-				continue
-			}
-			authVar := string(data[match[2]:match[3]])
-			loadingVar := string(data[match[4]:match[5]])
-			dataVar := string(dataVar1)
-			original := append([]byte(nil), data[match[0]:match[1]]...)
-			replacement := []byte(fmt.Sprintf("!%s&&(!%s||!!%s&&%s?.requirements?.featureRequirements?.fast_mode!==!1)", loadingVar, authVar, dataVar, dataVar))
-			if len(replacement) > len(original) {
-				return nil, fmt.Errorf("generated replacement is larger than original expression in %s", entry.Path)
-			}
-			replacement = append(replacement, bytes.Repeat([]byte{' '}, len(original)-len(replacement))...)
-			originals = append(originals, Candidate{
-				Entry:       entry,
-				MatchStart:  match[0],
-				MatchEnd:    match[1],
-				Original:    original,
-				Replacement: replacement,
-			})
+		r, err := scanRules(entry, data)
+		if err != nil {
+			return nil, err
 		}
-		count := len(patchedGatePattern.FindAllIndex(data, -1)) + len(previousPatchedGatePattern.FindAllIndex(data, -1))
-		if count > 0 {
-			patchedCount += count
-			patchedPath = entry.Path
+		if r.ui+r.readers+r.policies > 0 {
+			paths = append(paths, entry.Path)
 		}
+		if r.ui > 0 {
+			uiPath = entry.Path
+		}
+		report.ui += r.ui
+		report.readers += r.readers
+		report.policies += r.policies
+		report.patched += r.patched
+		report.edits = append(report.edits, r.edits...)
 	}
-	if len(originals) == 1 && patchedCount == 0 {
-		return &ProbeResult{Status: StatusOriginal, Candidate: &originals[0], TargetPath: originals[0].Entry.Path}, nil
+	result := &ProbeResult{Status: StatusUnknown, TargetPath: uiPath, TargetPaths: paths, Candidates: report.edits}
+	complete := report.ui == 1 && report.policies == 1 && report.readers >= 1 && report.readers <= 2
+	if !complete {
+		if report.ui == 1 && report.patched > 0 {
+			result.Status = StatusPartial
+		}
+		return result, nil
 	}
-	if len(originals) == 0 && patchedCount == 1 {
-		return &ProbeResult{Status: StatusPatched, TargetPath: patchedPath}, nil
+	if len(report.edits) == 0 {
+		result.Status = StatusPatched
+	} else if report.patched == 0 {
+		result.Status = StatusOriginal
+	} else {
+		result.Status = StatusPartial
 	}
-	return &ProbeResult{Status: StatusUnknown}, nil
+	if len(report.edits) > 0 {
+		result.Candidate = &result.Candidates[0]
+	}
+	return result, nil
 }
 
 func PatchCopy(sourcePath, destinationPath string) (*PatchResult, error) {
@@ -235,115 +233,10 @@ func PatchCopy(sourcePath, destinationPath string) (*PatchResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	if probe.Status != StatusOriginal || probe.Candidate == nil {
+	if (probe.Status != StatusOriginal && probe.Status != StatusPartial) || len(probe.Candidates) == 0 {
 		return nil, fmt.Errorf("ASAR is not in a uniquely patchable state: %s", probe.Status)
 	}
-	candidate := probe.Candidate
-	if candidate.Entry.Node.Integrity == nil || candidate.Entry.Node.Integrity.Algorithm != "SHA256" {
-		return nil, errors.New("target entry does not contain supported SHA256 integrity metadata")
-	}
-	originalData, err := archive.ReadEntry(candidate.Entry)
-	if err != nil {
-		return nil, err
-	}
-	if count := bytes.Count(originalData, candidate.Original); count != 1 {
-		return nil, fmt.Errorf("expected one target expression, found %d", count)
-	}
-	if err := verifyIntegrity(originalData, candidate.Entry.Node.Integrity); err != nil {
-		return nil, fmt.Errorf("verify original target integrity: %w", err)
-	}
-	patchedData := append([]byte(nil), originalData...)
-	copy(patchedData[candidate.MatchStart:candidate.MatchEnd], candidate.Replacement)
-
-	newIntegrity := calculateIntegrity(patchedData, candidate.Entry.Node.Integrity.BlockSize)
-	headerJSON := append([]byte(nil), archive.HeaderJSON...)
-	type replacement struct {
-		newValue string
-		count    int
-	}
-	replacements := map[string]replacement{}
-	addReplacement := func(oldValue, newValue string) error {
-		if oldValue == newValue {
-			return nil
-		}
-		current, ok := replacements[oldValue]
-		if ok && current.newValue != newValue {
-			return fmt.Errorf("one original integrity hash maps to multiple patched hashes")
-		}
-		current.newValue = newValue
-		current.count++
-		replacements[oldValue] = current
-		return nil
-	}
-	if err := addReplacement(candidate.Entry.Node.Integrity.Hash, newIntegrity.Hash); err != nil {
-		return nil, err
-	}
-	for index, oldHash := range candidate.Entry.Node.Integrity.Blocks {
-		newHash := newIntegrity.Blocks[index]
-		if err := addReplacement(oldHash, newHash); err != nil {
-			return nil, fmt.Errorf("prepare target block %d hash: %w", index, err)
-		}
-	}
-	for oldValue, replacement := range replacements {
-		headerJSON, err = replaceExactCount(headerJSON, oldValue, replacement.newValue, replacement.count)
-		if err != nil {
-			return nil, fmt.Errorf("update integrity hash: %w", err)
-		}
-	}
-	if len(headerJSON) != len(archive.HeaderJSON) {
-		return nil, errors.New("ASAR header length changed")
-	}
-
-	if err := copyFile(sourcePath, destinationPath); err != nil {
-		return nil, err
-	}
-	f, err := os.OpenFile(destinationPath, os.O_RDWR, 0)
-	if err != nil {
-		return nil, fmt.Errorf("open destination ASAR: %w", err)
-	}
-	cleanup := true
-	defer func() {
-		_ = f.Close()
-		if cleanup {
-			_ = os.Remove(destinationPath)
-		}
-	}()
-	if _, err := f.WriteAt(headerJSON, jsonOffset); err != nil {
-		return nil, fmt.Errorf("write ASAR header: %w", err)
-	}
-	entryOffset, _ := strconv.ParseInt(candidate.Entry.Node.Offset, 10, 64)
-	if _, err := f.WriteAt(patchedData, archive.ContentStart+entryOffset); err != nil {
-		return nil, fmt.Errorf("write patched target: %w", err)
-	}
-	if err := f.Sync(); err != nil {
-		return nil, fmt.Errorf("sync patched ASAR: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		return nil, fmt.Errorf("close patched ASAR: %w", err)
-	}
-	patchedArchive, err := Open(destinationPath)
-	if err != nil {
-		return nil, err
-	}
-	verification, err := patchedArchive.Probe()
-	if err != nil {
-		return nil, err
-	}
-	if verification.Status != StatusPatched {
-		return nil, fmt.Errorf("patched ASAR verification failed: %s", verification.Status)
-	}
-	archiveHash, err := FileSHA256(destinationPath)
-	if err != nil {
-		return nil, err
-	}
-	cleanup = false
-	return &PatchResult{
-		TargetPath:         candidate.Entry.Path,
-		OriginalFileHash:   candidate.Entry.Node.Integrity.Hash,
-		PatchedFileHash:    newIntegrity.Hash,
-		PatchedArchiveHash: archiveHash,
-		PatchedHeaderHash:  sum(headerJSON),
-	}, nil
+	return rewritePatchedArchive(archive, probe, destinationPath)
 }
 
 func FileSHA256(path string) (string, error) {
@@ -391,43 +284,7 @@ func verifyIntegrity(data []byte, integrity *Integrity) error {
 	return nil
 }
 
-func replaceExactCount(data []byte, oldValue, newValue string, expectedCount int) ([]byte, error) {
-	if len(oldValue) != len(newValue) {
-		return nil, errors.New("integrity replacement length mismatch")
-	}
-	oldBytes := []byte(oldValue)
-	if count := bytes.Count(data, oldBytes); count != expectedCount {
-		return nil, fmt.Errorf("expected %d occurrences of %s, found %d", expectedCount, oldValue, count)
-	}
-	return bytes.ReplaceAll(data, oldBytes, []byte(newValue)), nil
-}
-
 func sum(data []byte) string {
 	digest := sha256.Sum256(data)
 	return hex.EncodeToString(digest[:])
-}
-
-func copyFile(source, destination string) error {
-	input, err := os.Open(source)
-	if err != nil {
-		return fmt.Errorf("open source file: %w", err)
-	}
-	defer input.Close()
-	info, err := input.Stat()
-	if err != nil {
-		return err
-	}
-	output, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode().Perm())
-	if err != nil {
-		return fmt.Errorf("create destination file: %w", err)
-	}
-	if _, err := io.Copy(output, input); err != nil {
-		output.Close()
-		return fmt.Errorf("copy file: %w", err)
-	}
-	if err := output.Sync(); err != nil {
-		output.Close()
-		return err
-	}
-	return output.Close()
 }

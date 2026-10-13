@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -134,7 +135,7 @@ func (s Service) fail(manifest *state.Manifest, cause error) error {
 func requestQuit(inst *platform.Installation) error {
 	switch runtime.GOOS {
 	case "darwin":
-		output, err := exec.Command("/usr/bin/osascript", "-e", `tell application "ChatGPT" to quit`).CombinedOutput()
+		output, err := exec.Command("/usr/bin/osascript", "-e", "tell application "+strconv.Quote(inst.AppPath)+" to quit").CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("request Codex quit: %s", strings.TrimSpace(string(output)))
 		}
@@ -166,13 +167,110 @@ func requestQuit(inst *platform.Installation) error {
 func waitForExit(inst *platform.Installation, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		pid, _ := findPID(inst)
+		pid, err := findPID(inst)
+		if err != nil {
+			return err
+		}
 		if pid == 0 {
 			return nil
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	return errors.New("Codex did not exit within 15 seconds; force termination is disabled")
+	return fmt.Errorf("Codex did not exit within %s; force termination is disabled", timeout)
+}
+
+// QuitAndWait stops only the selected application and waits for its helpers.
+// Process inspection errors abort replacement instead of treating it as stopped.
+func QuitAndWait(inst *platform.Installation, timeout time.Duration) error {
+	if runtime.GOOS != "darwin" {
+		return errors.New("bundle replacement requires macOS")
+	}
+	remaining := func() (bool, error) {
+		output, err := exec.Command("/bin/ps", "-axo", "pid=,comm=").Output()
+		if err != nil {
+			return false, fmt.Errorf("inspect application processes: %w", err)
+		}
+		return hasBundleProcesses(string(output), inst.AppPath), nil
+	}
+	running, err := remaining()
+	if err != nil || !running {
+		return err
+	}
+	// Target the selected PID: two isolated bundles may share a bundle ID.
+	pid, err := findPID(inst)
+	if err != nil {
+		return err
+	}
+	if pid == 0 {
+		return errors.New("application helpers remain without a main process; replacement cancelled")
+	}
+	// NSRunningApplication sends the normal quit event to this exact PID and
+	// lets the app clean up its native children. SIGTERM can orphan monitors.
+	script := fmt.Sprintf(`ObjC.import("AppKit"); var selected = $.NSRunningApplication.runningApplicationWithProcessIdentifier(%d); if (!selected.isNil() && !selected.terminate) throw Error("Application rejected normal termination");`, pid)
+	if output, err := exec.Command("/usr/bin/osascript", "-l", "JavaScript", "-e", script).CombinedOutput(); err != nil {
+		return fmt.Errorf("request application shutdown: %s", strings.TrimSpace(string(output)))
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		running, err = remaining()
+		if err != nil || !running {
+			return err
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return fmt.Errorf("application or helpers still running after %s; replacement cancelled", timeout)
+}
+
+func hasBundleProcesses(output, appPath string) bool {
+	prefix := filepath.Clean(appPath) + string(os.PathSeparator) + "Contents" + string(os.PathSeparator)
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		command := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), fields[0]))
+		if strings.HasPrefix(command, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+type LaunchOptions struct {
+	Args []string
+	Env  []string
+}
+
+// LaunchAndVerify detects immediate crashes, not just a successful open command.
+func LaunchAndVerify(inst *platform.Installation, sessionID string, options ...LaunchOptions) error {
+	if err := launch(inst, sessionID, options...); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(15 * time.Second)
+	var pid int
+	for time.Now().Before(deadline) {
+		var err error
+		pid, err = findPID(inst)
+		if err != nil {
+			return err
+		}
+		if pid != 0 {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if pid == 0 {
+		return errors.New("application did not start")
+	}
+	time.Sleep(10 * time.Second)
+	current, err := findPID(inst)
+	if err != nil {
+		return err
+	}
+	if current != pid {
+		return errors.New("application exited shortly after launch")
+	}
+	return nil
 }
 
 func findPID(inst *platform.Installation) (int, error) {
@@ -219,14 +317,24 @@ func findPID(inst *platform.Installation) (int, error) {
 	}
 }
 
-func launch(inst *platform.Installation, sessionID string) error {
+func launch(inst *platform.Installation, sessionID string, options ...LaunchOptions) error {
 	deepLink := ""
 	if sessionID != "" {
 		deepLink = "codex://threads/" + sessionID
 	}
 	switch runtime.GOOS {
 	case "darwin":
-		if output, err := exec.Command("/usr/bin/open", "-na", inst.AppPath).CombinedOutput(); err != nil {
+		args := []string{"-na", inst.AppPath}
+		if len(options) > 0 {
+			for _, entry := range options[0].Env {
+				args = append(args, "--env", entry)
+			}
+			if len(options[0].Args) > 0 {
+				args = append(args, "--args")
+				args = append(args, options[0].Args...)
+			}
+		}
+		if output, err := exec.Command("/usr/bin/open", args...).CombinedOutput(); err != nil {
 			return fmt.Errorf("launch Codex: %s", strings.TrimSpace(string(output)))
 		}
 		if deepLink != "" {
