@@ -1,6 +1,7 @@
 package asar
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -13,6 +14,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 const (
@@ -70,11 +72,12 @@ type Candidate struct {
 }
 
 type ProbeResult struct {
-	Status      ProbeStatus
-	Candidate   *Candidate
-	Candidates  []Candidate
-	TargetPath  string
-	TargetPaths []string
+	Status          ProbeStatus
+	Candidate       *Candidate
+	Candidates      []Candidate
+	TargetPath      string
+	TargetPaths     []string
+	UltrafastModels []string
 }
 
 type PatchResult struct {
@@ -179,6 +182,12 @@ func (a *Archive) Probe() (*ProbeResult, error) {
 	var report ruleReport
 	var paths []string
 	uiPath := ""
+	var models []string
+	type tierAsset struct {
+		entry Entry
+		data  []byte
+	}
+	var tierAssets []tierAsset
 	for _, entry := range a.Entries() {
 		if !isJavaScript(entry) {
 			continue
@@ -186,6 +195,10 @@ func (a *Archive) Probe() (*ProbeResult, error) {
 		data, err := a.ReadEntry(entry)
 		if err != nil {
 			return nil, err
+		}
+		models = append(models, nativeUltrafastModels(data)...)
+		if !strings.HasPrefix(entry.Path, ".vite/") && (bytes.Contains(data, []byte("?.serviceTiers")) || bytes.Contains(data, []byte(tierHelperName))) {
+			tierAssets = append(tierAssets, tierAsset{entry, data})
 		}
 		r, err := scanRules(entry, data)
 		if err != nil {
@@ -203,8 +216,28 @@ func (a *Archive) Probe() (*ProbeResult, error) {
 		report.patched += r.patched
 		report.edits = append(report.edits, r.edits...)
 	}
-	result := &ProbeResult{Status: StatusUnknown, TargetPath: uiPath, TargetPaths: paths, Candidates: report.edits}
-	complete := report.ui == 1 && report.policies == 1 && report.readers >= 1 && report.readers <= 2
+	for _, asset := range tierAssets {
+		r, err := scanTierRules(asset.entry, asset.data, sortedModels(models))
+		if err != nil {
+			return nil, err
+		}
+		if r.tierMenus+r.tierLookups > 0 {
+			found := false
+			for _, path := range paths {
+				found = found || path == asset.entry.Path
+			}
+			if !found {
+				paths = append(paths, asset.entry.Path)
+			}
+		}
+		report.tierMenus += r.tierMenus
+		report.tierLookups += r.tierLookups
+		report.patched += r.patched
+		report.edits = append(report.edits, r.edits...)
+	}
+	result := &ProbeResult{Status: StatusUnknown, TargetPath: uiPath, TargetPaths: paths, Candidates: report.edits, UltrafastModels: sortedModels(models)}
+	tiersComplete := report.tierMenus == 0 && report.tierLookups == 0 || report.tierMenus == 1 && report.tierLookups == 1
+	complete := report.ui == 1 && report.policies == 1 && report.readers >= 1 && report.readers <= 2 && tiersComplete
 	if !complete {
 		if report.ui == 1 && report.patched > 0 {
 			result.Status = StatusPartial

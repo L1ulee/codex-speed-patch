@@ -2,6 +2,7 @@ package patch
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -18,7 +19,7 @@ import (
 	"codex-speed-patch/internal/state"
 )
 
-const RuleVersion = "speed-mode-api-v2"
+const RuleVersion = "speed-mode-api-v3"
 const CreatedDate = "2026-09-06"
 
 type Service struct {
@@ -48,7 +49,20 @@ func (s Service) Status() (*Result, error) {
 		return nil, err
 	}
 	manifest, _ := state.Load(state.ManifestPath(s.CodexHome))
-	return &Result{Status: probe.Status, Manifest: manifest}, nil
+	status := probe.Status
+	if status == asar.StatusPatched {
+		plan, err := platform.ModelCatalogPatch(inst, probe.UltrafastModels)
+		if err != nil {
+			return nil, err
+		}
+		if plan != nil {
+			status = asar.StatusPartial
+		}
+		if err := verifyRecordedCLI(inst, manifest); err != nil {
+			return nil, err
+		}
+	}
+	return &Result{Status: status, Manifest: manifest}, nil
 }
 
 func (s Service) Repair(sessionID string, markRestart bool) (*Result, error) {
@@ -83,6 +97,17 @@ func (s Service) Repair(sessionID string, markRestart bool) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	var catalogPlan *platform.CatalogPatch
+	status := probe.Status
+	if status != asar.StatusUnknown {
+		catalogPlan, err = platform.ModelCatalogPatch(inst, probe.UltrafastModels)
+		if err != nil {
+			return nil, err
+		}
+		if status == asar.StatusPatched && catalogPlan != nil {
+			status = asar.StatusPartial
+		}
+	}
 	now := time.Now().UTC()
 	manifestPath := state.ManifestPath(s.CodexHome)
 	manifest, _ := state.Load(manifestPath)
@@ -91,6 +116,8 @@ func (s Service) Repair(sessionID string, markRestart bool) (*Result, error) {
 	}
 	sameInstallation := manifest.AppPath == inst.AppPath && manifest.AppVersion == inst.Version
 	originalBackup := manifest.BackupDir
+	previousOriginalHash := manifest.OriginalAsarSHA256
+	previousOriginalCLIHash := manifest.OriginalCLISHA256
 	manifest.AppPath = inst.AppPath
 	manifest.AppVersion = inst.Version
 	manifest.CLIPath = inst.CLIPath
@@ -102,8 +129,13 @@ func (s Service) Repair(sessionID string, markRestart bool) (*Result, error) {
 		manifest.ResumeSessionID = sessionID
 	}
 
-	switch probe.Status {
+	switch status {
 	case asar.StatusPatched:
+		if sameInstallation {
+			if err := verifyRecordedCLI(inst, manifest); err != nil {
+				return nil, err
+			}
+		}
 		if err := platform.Verify(inst); err != nil {
 			return nil, err
 		}
@@ -116,6 +148,13 @@ func (s Service) Repair(sessionID string, markRestart bool) (*Result, error) {
 		}
 		manifest.Status = string(asar.StatusPatched)
 		manifest.PatchedAsarSHA256 = hash
+		if inst.CLIPath != "" {
+			manifest.PatchedCLISHA256, err = asar.FileSHA256(inst.CLIPath)
+			if err != nil {
+				return nil, err
+			}
+		}
+		manifest.PatchRuleVersion = RuleVersion
 		manifest.LastError = ""
 		if err := state.Save(manifestPath, manifest); err != nil {
 			return nil, err
@@ -142,17 +181,15 @@ func (s Service) Repair(sessionID string, markRestart bool) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	originalCLIHash := ""
+	if inst.CLIPath != "" {
+		originalCLIHash, err = asar.FileSHA256(inst.CLIPath)
+		if err != nil {
+			return nil, err
+		}
+	}
 	backupDir, err := createBackup(s.CodexHome, inst, originalHash, runtime.GOOS == "darwin")
 	if err != nil {
-		return nil, err
-	}
-	tempPath := inst.AsarPath + ".speedpatch.tmp"
-	_ = os.Remove(tempPath)
-	patchResult, err := asar.PatchCopy(inst.AsarPath, tempPath)
-	if err != nil {
-		return nil, err
-	}
-	if err := replaceFile(tempPath, inst.AsarPath); err != nil {
 		return nil, err
 	}
 	rollback := func(cause error) error {
@@ -161,7 +198,25 @@ func (s Service) Repair(sessionID string, markRestart bool) (*Result, error) {
 		}
 		return cause
 	}
-	if err := platform.Finalize(inst, patchResult.PatchedHeaderHash); err != nil {
+	var patchResult *asar.PatchResult
+	if len(probe.Candidates) > 0 {
+		tempPath := inst.AsarPath + ".speedpatch.tmp"
+		_ = os.Remove(tempPath)
+		patchResult, err = asar.PatchCopy(inst.AsarPath, tempPath)
+		if err != nil {
+			return nil, err
+		}
+		if err := replaceFile(tempPath, inst.AsarPath); err != nil {
+			return nil, rollback(err)
+		}
+	} else {
+		headerHash := sha256.Sum256(archive.HeaderJSON)
+		patchResult = &asar.PatchResult{TargetPath: probe.TargetPath, TargetPaths: probe.TargetPaths, PatchedHeaderHash: hex.EncodeToString(headerHash[:])}
+	}
+	if err := platform.ApplyModelCatalog(inst, catalogPlan); err != nil {
+		return nil, rollback(err)
+	}
+	if err := platform.Finalize(inst, patchResult.PatchedHeaderHash, catalogPlan != nil); err != nil {
 		return nil, rollback(err)
 	}
 	verifiedArchive, err := asar.Open(inst.AsarPath)
@@ -175,6 +230,12 @@ func (s Service) Repair(sessionID string, markRestart bool) (*Result, error) {
 		}
 		return nil, rollback(err)
 	}
+	if remaining, err := platform.ModelCatalogPatch(inst, verifiedProbe.UltrafastModels); err != nil || remaining != nil {
+		if err == nil {
+			err = errors.New("native CLI model catalog still requires a patch")
+		}
+		return nil, rollback(err)
+	}
 	finalHash, err := asar.FileSHA256(inst.AsarPath)
 	if err != nil {
 		return nil, rollback(err)
@@ -184,10 +245,19 @@ func (s Service) Repair(sessionID string, markRestart bool) (*Result, error) {
 	manifest.TargetAssets = patchResult.TargetPaths
 	manifest.OriginalAsarSHA256 = originalHash
 	manifest.PatchedAsarSHA256 = finalHash
+	manifest.OriginalCLISHA256 = originalCLIHash
+	if inst.CLIPath != "" {
+		manifest.PatchedCLISHA256, err = asar.FileSHA256(inst.CLIPath)
+		if err != nil {
+			return nil, rollback(err)
+		}
+	}
 	manifest.BackupDir = backupDir
-	if probe.Status == asar.StatusPartial && sameInstallation && originalBackup != "" {
+	if status == asar.StatusPartial && sameInstallation && originalBackup != "" {
 		// Upgrading a UI-only patch must not discard the original rollback copy.
 		manifest.BackupDir = originalBackup
+		manifest.OriginalAsarSHA256 = previousOriginalHash
+		manifest.OriginalCLISHA256 = previousOriginalCLIHash
 	}
 	manifest.Status = string(asar.StatusPatched)
 	manifest.PatchedAt = now
@@ -198,9 +268,23 @@ func (s Service) Repair(sessionID string, markRestart bool) (*Result, error) {
 	manifest.RestartAttemptedAt = time.Time{}
 	manifest.RestartCompletedAt = time.Time{}
 	if err := state.Save(manifestPath, manifest); err != nil {
-		return nil, err
+		return nil, rollback(err)
 	}
 	return &Result{Changed: true, Status: asar.StatusPatched, Manifest: manifest}, nil
+}
+
+func verifyRecordedCLI(inst *platform.Installation, manifest *state.Manifest) error {
+	if manifest == nil || manifest.AppPath != inst.AppPath || manifest.AppVersion != inst.Version || manifest.Status != "patched" || manifest.PatchedCLISHA256 == "" {
+		return nil
+	}
+	hash, err := asar.FileSHA256(inst.CLIPath)
+	if err != nil {
+		return err
+	}
+	if hash != manifest.PatchedCLISHA256 {
+		return errors.New("native CLI hash differs from the recorded patched version")
+	}
+	return nil
 }
 
 func (s Service) Restore() error {
@@ -246,6 +330,13 @@ func createBackup(codexHome string, inst *platform.Installation, originalHash st
 	if _, err := os.Stat(filepath.Join(dir, "app.asar")); errors.Is(err, os.ErrNotExist) {
 		if err := copyFile(inst.AsarPath, filepath.Join(dir, "app.asar")); err != nil {
 			return "", err
+		}
+	}
+	if inst.CLIPath != "" && !fullAppBackup {
+		if _, err := os.Stat(filepath.Join(dir, "native-cli")); errors.Is(err, os.ErrNotExist) {
+			if err := copyFile(inst.CLIPath, filepath.Join(dir, "native-cli")); err != nil {
+				return "", err
+			}
 		}
 	}
 	if runtime.GOOS == "darwin" {
@@ -301,6 +392,13 @@ func restoreBackup(inst *platform.Installation, backupDir string) error {
 	}
 	if err := copyFile(filepath.Join(backupDir, "app.asar"), inst.AsarPath); err != nil {
 		return err
+	}
+	if inst.CLIPath != "" {
+		if _, err := os.Stat(filepath.Join(backupDir, "native-cli")); err == nil {
+			if err := copyFile(filepath.Join(backupDir, "native-cli"), inst.CLIPath); err != nil {
+				return err
+			}
+		}
 	}
 	if runtime.GOOS == "darwin" {
 		if err := copyFile(filepath.Join(backupDir, "Info.plist"), inst.InfoPlist); err != nil {

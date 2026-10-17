@@ -20,9 +20,9 @@ var (
 )
 
 type ruleReport struct {
-	ui, readers, policies int
-	patched               int
-	edits                 []Candidate
+	ui, readers, policies, tierMenus, tierLookups int
+	patched                                       int
+	edits                                         []Candidate
 }
 
 func (r *ruleReport) add(entry Entry, data []byte, start, end int, replacement string) {

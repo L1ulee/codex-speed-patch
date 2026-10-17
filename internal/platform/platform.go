@@ -70,7 +70,7 @@ func inspect(candidate string) (*Installation, error) {
 			AsarPath:    asarPath,
 			InfoPlist:   infoPlist,
 			Executable:  executable,
-			CLIPath:     filepath.Join(resources, "codex"),
+			CLIPath:     firstExisting(filepath.Join(resources, "codex-cli", "CodexCLI.app", "Contents", "MacOS", "codex"), filepath.Join(resources, "codex")),
 			Version:     version,
 		}, nil
 	case "windows":

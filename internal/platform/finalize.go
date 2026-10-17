@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-func Finalize(inst *Installation, archiveHeaderSHA256 string) error {
+func Finalize(inst *Installation, archiveHeaderSHA256 string, nativeCLIChanged ...bool) error {
 	switch runtime.GOOS {
 	case "darwin":
 		oldIntegrity, err := readASARIntegrity(inst.InfoPlist)
@@ -32,13 +32,13 @@ func Finalize(inst *Installation, archiveHeaderSHA256 string) error {
 			return err
 		}
 		defer os.Remove(entitlementsPath)
-		steps, err := macSignSteps(inst, entitlementsPath)
+		steps, err := macSignSteps(inst, entitlementsPath, nativeCLIChanged...)
 		if err != nil {
 			return err
 		}
 		helperRoot := filepath.Join(inst.AppPath, "Contents", "Frameworks", "Codex Framework.framework", "Helpers") + string(os.PathSeparator)
 		for _, args := range steps {
-			if strings.HasPrefix(args[len(args)-1], helperRoot) {
+			if strings.HasPrefix(args[len(args)-1], helperRoot) || args[len(args)-1] == filepath.Join(inst.AppPath, "Contents", "Resources", "codex-cli", "CodexCLI.app") {
 				helperEntitlements, err := writeHelperSigningEntitlements(args[len(args)-1])
 				if err != nil {
 					return err
@@ -61,7 +61,7 @@ func Finalize(inst *Installation, archiveHeaderSHA256 string) error {
 	}
 }
 
-func macSignSteps(inst *Installation, entitlementsPath string) ([][]string, error) {
+func macSignSteps(inst *Installation, entitlementsPath string, nativeCLIChanged ...bool) ([][]string, error) {
 	framework := filepath.Join(inst.AppPath, "Contents", "Frameworks", "Codex Framework.framework")
 	helpers, err := filepath.Glob(filepath.Join(framework, "Helpers", "*.app"))
 	if err != nil || len(helpers) == 0 {
@@ -81,6 +81,23 @@ func macSignSteps(inst *Installation, entitlementsPath string) ([][]string, erro
 	}
 	for _, target := range updaterTargets {
 		steps = append(steps, []string{"--force", "--sign", "-", "--preserve-metadata=identifier,flags,runtime,entitlements", target})
+	}
+	if len(nativeCLIChanged) > 0 && nativeCLIChanged[0] {
+		cliBundle := filepath.Join(inst.AppPath, "Contents", "Resources", "codex-cli", "CodexCLI.app")
+		if _, err := os.Lstat(cliBundle); err == nil {
+			if !isWithinApp(inst.AppPath, cliBundle) {
+				return nil, fmt.Errorf("native CLI bundle resolves outside app")
+			}
+			steps = append(steps, []string{"--force", "--sign", "-", "--preserve-metadata=identifier,flags,runtime", cliBundle})
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		} else {
+			// Older macOS packages store the CLI as a standalone executable.
+			if !isWithinApp(inst.AppPath, inst.CLIPath) {
+				return nil, fmt.Errorf("native CLI executable resolves outside app")
+			}
+			steps = append(steps, []string{"--force", "--sign", "-", "--preserve-metadata=identifier,flags,runtime", inst.CLIPath})
+		}
 	}
 	steps = append(steps, []string{"--force", "--sign", "-", "--preserve-metadata=identifier,flags,runtime", "--entitlements", entitlementsPath, inst.AppPath})
 	return steps, nil

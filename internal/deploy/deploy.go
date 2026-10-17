@@ -33,6 +33,7 @@ type Record struct {
 	AppVersion     string          `json:"app_version"`
 	SourceHash     string          `json:"source_asar_sha256"`
 	SourceInfoHash string          `json:"source_info_sha256"`
+	SourceCLIHash  string          `json:"source_cli_sha256,omitempty"`
 	PatchedHash    string          `json:"patched_asar_sha256"`
 	Directory      string          `json:"directory"`
 	StagePath      string          `json:"stage_path"`
@@ -166,6 +167,13 @@ func (s Service) Prepare(sessionID string) (result *Result, err error) {
 	if err != nil {
 		return nil, err
 	}
+	sourceCLIHash := ""
+	if inst.CLIPath != "" {
+		sourceCLIHash, err = asar.FileSHA256(inst.CLIPath)
+		if err != nil {
+			return nil, err
+		}
+	}
 	work, err := os.MkdirTemp("", "codex-speed-deploy-")
 	if err != nil {
 		return nil, err
@@ -255,7 +263,8 @@ func (s Service) Prepare(sessionID string) (result *Result, err error) {
 	manifest.OriginalAsarSHA256 = backupHash
 	record := &Record{ID: id, Status: "prepared", AppPath: inst.AppPath, AppVersion: inst.Version,
 		SourceHash: sourceHash, SourceInfoHash: infoHash, PatchedHash: manifest.PatchedAsarSHA256,
-		Directory: directory, StagePath: stagePath, RollbackPath: filepath.Join(sibling, "original.app"),
+		SourceCLIHash: sourceCLIHash,
+		Directory:     directory, StagePath: stagePath, RollbackPath: filepath.Join(sibling, "original.app"),
 		TestMode: s.AllowTestPath, Manifest: manifest, HadManifest: hadManifest, CreatedAt: time.Now().UTC()}
 	if err := save(s.CodexHome, record); err != nil {
 		return nil, err
@@ -335,6 +344,12 @@ func verifyBundle(path, version, hash string, patched bool) error {
 		}
 		if probe.Status != asar.StatusPatched {
 			return fmt.Errorf("replacement bundle reports %s", probe.Status)
+		}
+		if plan, err := platform.ModelCatalogPatch(inst, probe.UltrafastModels); err != nil || plan != nil {
+			if err != nil {
+				return err
+			}
+			return errors.New("replacement native CLI still requires Ultrafast catalog repair")
 		}
 	}
 	return nil
@@ -450,6 +465,12 @@ func (s Service) activate(record *Record) (err error) {
 	if err := ops.verify(record.StagePath, record.AppVersion, record.PatchedHash, true); err != nil {
 		return err
 	}
+	if err := verifyCLIHash(record.StagePath, record.Manifest.PatchedCLISHA256); err != nil {
+		return err
+	}
+	if err := verifyCLIHash(record.AppPath, record.SourceCLIHash); err != nil {
+		return err
+	}
 	if err := ops.verify(filepath.Join(record.Manifest.BackupDir, "ChatGPT.app"), record.AppVersion, record.Manifest.OriginalAsarSHA256, false); err != nil {
 		return fmt.Errorf("original backup is invalid: %w", err)
 	}
@@ -477,6 +498,9 @@ func (s Service) activate(record *Record) (err error) {
 	}()
 	// An update may have finished while the application was shutting down.
 	if err := ops.verify(record.AppPath, record.AppVersion, record.SourceHash, false); err != nil {
+		return err
+	}
+	if err := verifyCLIHash(record.AppPath, record.SourceCLIHash); err != nil {
 		return err
 	}
 	infoHash, err = asar.FileSHA256(filepath.Join(record.AppPath, "Contents", "Info.plist"))
@@ -531,6 +555,9 @@ func (s Service) activate(record *Record) (err error) {
 	if err := ops.verify(record.AppPath, record.AppVersion, record.PatchedHash, true); err != nil {
 		return err
 	}
+	if err := verifyCLIHash(record.AppPath, record.Manifest.PatchedCLISHA256); err != nil {
+		return err
+	}
 	manifest := record.Manifest
 	manifest.LastCheckedAt = time.Now().UTC()
 	manifest.RestartRequired = false
@@ -550,5 +577,23 @@ func (s Service) activate(record *Record) (err error) {
 	}
 	// A full durable backup remains available to the existing restore command.
 	_ = os.RemoveAll(filepath.Dir(record.RollbackPath))
+	return nil
+}
+
+func verifyCLIHash(appPath, expected string) error {
+	if expected == "" {
+		return nil
+	}
+	inst, err := platform.Detect(appPath)
+	if err != nil {
+		return err
+	}
+	hash, err := asar.FileSHA256(inst.CLIPath)
+	if err != nil {
+		return err
+	}
+	if hash != expected {
+		return errors.New("native CLI changed after deployment preparation")
+	}
 	return nil
 }

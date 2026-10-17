@@ -154,3 +154,19 @@ func TestSignedMacTestCopyMustResolveInsideTemporaryDirectory(t *testing.T) {
 		t.Fatal("symlink to production app was accepted as a test copy")
 	}
 }
+
+func TestNativeCLIBundleIsSignedBeforeOuterApp(t *testing.T) {
+	app := filepath.Join(t.TempDir(), "Test.app")
+	for _, path := range []string{"Contents/Frameworks/Codex Framework.framework/Helpers/Codex (Renderer).app", "Contents/Resources/codex-cli/CodexCLI.app"} {
+		if err := os.MkdirAll(filepath.Join(app, path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	steps, err := macSignSteps(&Installation{AppPath: app}, "/tmp/entitlements.plist", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := steps[len(steps)-2]; got[len(got)-1] != filepath.Join(app, "Contents/Resources/codex-cli/CodexCLI.app") {
+		t.Fatalf("native CLI must be signed before its enclosing app: %v", steps)
+	}
+}

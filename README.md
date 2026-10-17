@@ -8,29 +8,35 @@
 
 ## 当前状态
 
-- 补丁器版本：`0.1.2`（未发布）
-- macOS 实测日期：`2026-10-13`
-- 已测试 Codex Desktop：`26.1007.30912`
+- 补丁器版本：`0.1.3`
+- macOS 实测日期：`2026-10-17`
+- 本版已测试 Codex Desktop：`26.1013.40934`；此前已测试 `26.1007.30912`
 
 本版隔离副本已通过以下检查：
 
-- Codex CLI/app-server 初始化成功。
-- 主窗口完成 `ready-to-show`。
-- 原生 Speed 保存与读取函数通过 API 登录、档位映射和策略关闭的运行时对照测试。
-- 本地假上游捕获首轮、推理续跑和桌面派生线程的 `service_tier: priority`。
-- `codesign --verify --deep --strict` 通过。
-- 完整回滚恢复原始 ASAR 与官方签名。
+- CLI/app-server 初始化、应用稳定启动与正常退出。
+- `gpt-6.1-sol`、`gpt-5.6-sol`、`gpt-6-astra` 的原生 Speed 子菜单、Ultrafast 选中值及 Speed 命令交互。
+- 其余可见模型保留普通 Fast 控件与 `priority` 映射；明确关闭档位的策略仍有效。
+- 本地模拟上游捕获三个模型的首轮、推理续跑和桌面派生线程请求，均携带 `service_tier: ultrafast`；普通 Fast 的对应请求携带 `priority`。
+- `codesign --verify --deep --strict`、嵌套 CLI 与 Sparkle 更新签名链检查。
+- 全量 Go 测试和 `go vet`。
 
-`0.1.2` 补丁已通过完整备份和整包替换部署到正式应用，用户确认 Speed/Fast 控件出现且可切换。CLI 的自动整包替换流程另在隔离副本中验证；自主子代理工具、真实上游、Keychain、推送和实际官方更新安装仍待端到端验证。
+正式应用已完成整包替换与启动检查，部署记录为 `deployed`。这不等同于真实账户的 Ultrafast 交互或上游支持已获确认。真实上游、自动派生子代理工具、Keychain、推送和实际官方更新安装仍待端到端验证；Windows/Linux 发布产物仅完成交叉构建与格式检查。
 
-## 0.1.2 修复（未发布）
+## 0.1.3 修复
 
-- 补丁规则升级为 `speed-mode-api-v2`：旧版仅打开控件的补丁显示为 `partial`，升级时同时修复保存档位、队列和续跑/派生线程的读取路径。Fast 使用模型目录定义的真实 ID（例如 `priority`），不强制重命名为 `fast`。
-- 兼容 `26.1007.30912` 的独立 Fast/Ultrafast 权限，保留明确关闭档位的策略检查。
-- Sparkle 的 Autoupdate、Updater、XPC 服务和 Framework 从内到外重签，与宿主保持一致，修复混合 Team ID 引发的安装连接 4005。保留更新公钥和更新包验证；仅移除不适用于 ad-hoc 的开发者身份 entitlements。
-- 旧 manifest 的备份版本与已安装版本不同会停止恢复，避免将官方更新回退成旧版应用。
-- 已通过隔离包启动、原生组件请求函数对照、ASAR 完整性及更新签名链检查；本地假上游已捕获 Speed 保存后首轮、推理续跑及桌面派生线程均携带 `service_tier: priority`。自主子代理工具与官方更新安装的端到端复测仍待完成。
-- 手动执行 `repair --allow-macos-production` 时，CLI 自动备份、生成补丁包、调度一次性整包替换并重启验证；失败时恢复原应用和原 manifest。Hook 沿用原有处理流程，不触发整包部署。
+- 补丁规则升级为 `speed-mode-api-v3`，同时修复原生档位选项与选中值解析，兼容菜单和解析器分布在独立模块中的 `26.1013.40934` 布局。
+- 优先读取原生模型变体和 provider 档位声明；对用户确认支持 Ultrafast 的 `gpt-6.1-sol`、`gpt-5.6-sol`、`gpt-6-astra`，在应用内存在对应模型描述时补齐能力。其他模型保留自己的档位，不按模型家族猜测 Ultrafast。
+- 同步补齐内置 CLI 模型目录，避免只显示控件却在请求中丢弃 `ultrafast`。目录等长替换，保留可执行文件偏移、未知元数据与目录外字节。
+- 修复升级旧补丁时未计入目录保留空白容量而报“空间不足”的问题，重复修补保持幂等。
+- 兼容嵌套的 `codex-cli/CodexCLI.app`，仅在 CLI 实际修改后重签其应用包；状态与部署流程核对 CLI 哈希，回滚保留原始 ASAR 和 CLI 备份。
+
+## 0.1.2 修复
+
+- 规则 `speed-mode-api-v2` 修复保存档位、队列及续跑/派生线程读取路径；Fast 保留模型目录的真实 ID（例如 `priority`）。
+- 兼容独立 Fast/Ultrafast 权限，保留明确关闭档位的策略检查。
+- 修复 Sparkle 更新辅助程序与宿主签名身份不一致的链路，保留更新公钥及包验证。实际官方更新安装仍需端到端验证。
+- `repair --allow-macos-production` 支持完整备份、一次性整包替换、启动验证及失败回滚；Hook 不触发整包部署。旧版本备份不会覆盖已更新的应用。
 
 ## 工作原理
 
@@ -56,7 +62,7 @@ Codex 模型目录已经可以声明速度档位：
 4. 重算每个变更资源的 SHA-256 和 ASAR 分块哈希。
 5. 更新 Header JSON 的偏移、大小和完整性记录，保留链接、unpacked 与未知元数据。
 6. macOS 上将 Header JSON SHA-256 写入 `ElectronAsarIntegrity`，并同步 Framework 的 `__asar_integrity` 摘要。
-7. 按 Electron Helper/Framework、Sparkle 辅助程序/Framework、外层应用的顺序重新签名，验证资源签名和更新链身份。
+7. 根据已验证的模型能力同步修补内置 CLI 目录；必要时重签嵌套 CLI，再与 Electron、Sparkle 和外层应用一起验证签名及更新链身份。
 
 ## 安全机制
 
@@ -124,7 +130,7 @@ ad-hoc 签名不能保留 OpenAI Developer ID 和原始 TeamIdentifier，可能�
 
 ### 1. 选择二进制
 
-GitHub 的 `v0.1.1` Release 仅含源码。此前六平台 `0.1.2` 构建保留在 `dist/v0.1.2/`；本轮包含自动整包替换的 Apple Silicon 构建位于 `dist/v0.1.2-direct-replace/`，使用同目录的 `SHA256SUMS.txt` 核对。
+从 [v0.1.3 Release](https://github.com/L1ulee/codex-speed-patch/releases/tag/v0.1.3) 下载对应平台二进制与 `SHA256SUMS.txt`。源码构建产物位于 `dist/v0.1.3/`；校验值以同一 Release 中的清单为准。
 
 ```text
 codex-speed-patch-darwin-arm64
@@ -138,13 +144,13 @@ codex-speed-patch-windows-arm64.exe
 macOS 示例：
 
 ```bash
-chmod +x dist/v0.1.2-direct-replace/codex-speed-patch-darwin-arm64
+chmod +x dist/v0.1.3/codex-speed-patch-darwin-arm64
 ```
 
 ### 2. 检查状态
 
 ```bash
-dist/v0.1.2-direct-replace/codex-speed-patch-darwin-arm64 status \
+dist/v0.1.3/codex-speed-patch-darwin-arm64 status \
   --app "/Applications/ChatGPT.app"
 ```
 
@@ -152,7 +158,7 @@ dist/v0.1.2-direct-replace/codex-speed-patch-darwin-arm64 status \
 
 - `original`：尚未应用补丁。
 - `patched`：补丁已生效。
-- `partial`：仅有旧版部分补丁，完整请求规则尚未覆盖。
+- `partial`：控件、请求路径或内置 CLI 目录仍需修复。
 - `unknown`：当前版本不符合安全补丁规则。
 - `restored`：manifest 记录应用已经回滚。
 
@@ -295,22 +301,22 @@ codex-speed-patch remove-hook
 
 要求 Go `1.24` 或更高版本。
 
-请求与新版权限的运行时回归测试还需要 Node.js；缺少 Node.js 时这些测试会明确跳过。
+运行时回归测试需要 Node.js；缺少 Node.js 时无法完成全部测试。
 
 ```bash
 go test ./...
 go vet ./...
 go build ./cmd/codex-speed-patch
 
-GOOS=darwin GOARCH=arm64 go build -o dist/v0.1.2/codex-speed-patch-darwin-arm64 ./cmd/codex-speed-patch
-GOOS=darwin GOARCH=amd64 go build -o dist/v0.1.2/codex-speed-patch-darwin-amd64 ./cmd/codex-speed-patch
-GOOS=linux GOARCH=amd64 go build -o dist/v0.1.2/codex-speed-patch-linux-amd64 ./cmd/codex-speed-patch
-GOOS=linux GOARCH=arm64 go build -o dist/v0.1.2/codex-speed-patch-linux-arm64 ./cmd/codex-speed-patch
-GOOS=windows GOARCH=amd64 go build -o dist/v0.1.2/codex-speed-patch-windows-amd64.exe ./cmd/codex-speed-patch
-GOOS=windows GOARCH=arm64 go build -o dist/v0.1.2/codex-speed-patch-windows-arm64.exe ./cmd/codex-speed-patch
+GOOS=darwin GOARCH=arm64 go build -o dist/v0.1.3/codex-speed-patch-darwin-arm64 ./cmd/codex-speed-patch
+GOOS=darwin GOARCH=amd64 go build -o dist/v0.1.3/codex-speed-patch-darwin-amd64 ./cmd/codex-speed-patch
+GOOS=linux GOARCH=amd64 go build -o dist/v0.1.3/codex-speed-patch-linux-amd64 ./cmd/codex-speed-patch
+GOOS=linux GOARCH=arm64 go build -o dist/v0.1.3/codex-speed-patch-linux-arm64 ./cmd/codex-speed-patch
+GOOS=windows GOARCH=amd64 go build -o dist/v0.1.3/codex-speed-patch-windows-amd64.exe ./cmd/codex-speed-patch
+GOOS=windows GOARCH=arm64 go build -o dist/v0.1.3/codex-speed-patch-windows-arm64.exe ./cmd/codex-speed-patch
 ```
 
-本地 `0.1.2` 产物的校验值位于 `dist/v0.1.2/SHA256SUMS.txt`。[CHECKSUMS.txt](CHECKSUMS.txt) 仅记录 `v0.1.0` 的历史二进制校验值。
+本地 `0.1.3` 产物的校验值位于 `dist/v0.1.3/SHA256SUMS.txt`。[CHECKSUMS.txt](CHECKSUMS.txt) 仅记录 `v0.1.0` 的历史二进制校验值。
 
 ## 状态文件
 

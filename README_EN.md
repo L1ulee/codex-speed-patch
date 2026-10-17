@@ -8,29 +8,35 @@ The patcher reuses Codex's existing model catalog, `service_tiers`, `service_tie
 
 ## Current Status
 
-- Patcher version: `0.1.2` (unreleased)
-- macOS test date: `2026-10-13`
-- Tested Codex Desktop: `26.1007.30912`
+- Patcher version: `0.1.3`
+- macOS test date: `2026-10-17`
+- Codex Desktop tested for this release: `26.1013.40934`; previously tested: `26.1007.30912`
 
-The isolated copy for this version passed these checks:
+The isolated copy passed these checks:
 
-- Codex CLI/app-server initialized successfully.
-- The main window reached `ready-to-show`.
-- Native Speed writer/readers passed runtime comparisons for API authentication, tier mapping, and policy denials.
-- A local mock upstream captured `service_tier: priority` on the first turn, reasoning continuation, and desktop-derived thread.
-- `codesign --verify --deep --strict` passed.
-- Full rollback restored the original ASAR and official signature.
+- CLI/app-server initialization, stable application startup, and normal shutdown.
+- Native Speed submenus, selected Ultrafast values, and Speed command interactions for `gpt-6.1-sol`, `gpt-5.6-sol`, and `gpt-6-astra`.
+- Other visible models retain the ordinary Fast control and `priority` mapping; explicit policy denials remain effective.
+- A local mock upstream captured `service_tier: ultrafast` on the first turn, reasoning continuation, and desktop-derived thread for all three models. Ordinary Fast requests retained `priority`.
+- `codesign --verify --deep --strict`, nested CLI signing, and Sparkle signer-chain checks.
+- The full Go test suite and `go vet`.
 
-The `0.1.2` patch was deployed to the installed app through full backup and bundle replacement, and the user confirmed that Speed/Fast is visible and switchable. The CLI's automatic replacement flow is tested separately on isolated copies. Autonomous subagent tools, real upstream requests, Keychain, push notifications, and an actual official update installation still require end-to-end verification.
+The production app completed bundle replacement and startup checks, with deployment state `deployed`. This does not confirm Ultrafast interactions in a real account or support by the actual upstream. Real upstream requests, autonomous subagent tools, Keychain, push notifications, and actual official update installation still require end-to-end verification. Windows/Linux release binaries were cross-compiled and checked for format only.
 
-## 0.1.2 Fixes (Unreleased)
+## 0.1.3 Fixes
 
-- Rule `speed-mode-api-v2` classifies old UI-only patches as `partial` and covers saved tier readers, queued execution, and continuation/derived-thread paths. Fast retains the model catalog's actual tier ID, such as `priority`.
-- Supports the separate Fast/Ultrafast policies in `26.1007.30912` while retaining explicit policy denials.
-- Re-signs Sparkle Autoupdate, Updater, XPC services, and Framework from the inside out to match the host and address installer connection error 4005. Update public keys and package validation remain intact; only developer-identity entitlements incompatible with ad-hoc signing are removed.
-- Rejects restoration when a manifest backup belongs to another installed version, preventing rollback over an official update.
-- Isolated startup, native request-function comparisons, ASAR integrity, and update signing-chain checks passed. A local mock upstream captured `service_tier: priority` on the first turn, reasoning continuation, and desktop-derived thread after the native Speed writer saved it. Autonomous subagent tools and an actual official update installation still require end-to-end verification.
-- A manual `repair --allow-macos-production` command backs up the app, prepares a patched bundle, schedules one replacement, and checks startup. Failures restore the previous bundle and manifest. Hooks retain their existing behavior and do not trigger bundle deployment.
+- Rule `speed-mode-api-v3` repairs both native tier options and selected-tier resolution, including the separate menu/resolver modules in `26.1013.40934`.
+- Uses native model variants and provider tier declarations first. The operator-confirmed `gpt-6.1-sol`, `gpt-5.6-sol`, and `gpt-6-astra` gain Ultrafast when their structured descriptions exist in the app. Other models keep their declared tiers; model-family names do not imply Ultrafast support.
+- Updates the embedded CLI model catalog as well as the UI, preventing the CLI from dropping `ultrafast` from requests. Equal-length replacement preserves executable offsets, unknown metadata, and bytes outside the catalog.
+- Reuses whitespace reserved by earlier patches when extending the catalog, fixing false insufficient-space errors and preserving idempotency.
+- Detects the nested `codex-cli/CodexCLI.app` and re-signs it only when the CLI changes. Status and deployment checks validate CLI hashes; rollback retains original ASAR and CLI backups.
+
+## 0.1.2 Fixes
+
+- Rule `speed-mode-api-v2` covers saved tier readers, queued execution, and continuation/derived-thread paths. Fast retains the model catalog's actual tier ID, such as `priority`.
+- Supports independent Fast/Ultrafast permissions and preserves explicit policy denials.
+- Repairs signer identity mismatches between Sparkle helpers and the host while retaining update public keys and package validation. Actual official update installation still requires end-to-end verification.
+- `repair --allow-macos-production` provides a full backup, one-shot bundle replacement, startup checks, and rollback on failure. Hooks do not trigger bundle deployment, and stale backups cannot overwrite an updated app.
 
 ## How It Works
 
@@ -56,7 +62,7 @@ The patcher performs these steps:
 4. Recalculate every changed asset's SHA-256 and ASAR block hashes.
 5. Update Header JSON offsets, sizes, and integrity while retaining links, unpacked entries, and unknown metadata.
 6. On macOS, write the Header JSON SHA-256 to `ElectronAsarIntegrity` and update the Framework's `__asar_integrity` digest.
-7. Re-sign Electron Helpers/Framework, Sparkle helpers/Framework, and outer app in that order; verify resource seals and update signer identities.
+7. Reconcile the embedded CLI catalog with verified model capabilities; re-sign its nested bundle when changed, then verify signatures and update signer identities across Electron, Sparkle, and the outer app.
 
 ## Safety Model
 
@@ -124,7 +130,7 @@ These capabilities may be affected. A full official application backup restores 
 
 ### 1. Select a Binary
 
-The GitHub `v0.1.1` Release contains source only. Earlier six-platform `0.1.2` builds remain in `dist/v0.1.2/`. The Apple Silicon build with automatic bundle replacement is in `dist/v0.1.2-direct-replace/`, with its own `SHA256SUMS.txt`.
+Download your platform binary and `SHA256SUMS.txt` from the [v0.1.3 Release](https://github.com/L1ulee/codex-speed-patch/releases/tag/v0.1.3). Local source builds are in `dist/v0.1.3/`; verify against the checksum manifest from the same Release.
 
 ```text
 codex-speed-patch-darwin-arm64
@@ -138,13 +144,13 @@ codex-speed-patch-windows-arm64.exe
 macOS example:
 
 ```bash
-chmod +x dist/v0.1.2-direct-replace/codex-speed-patch-darwin-arm64
+chmod +x dist/v0.1.3/codex-speed-patch-darwin-arm64
 ```
 
 ### 2. Inspect the State
 
 ```bash
-dist/v0.1.2-direct-replace/codex-speed-patch-darwin-arm64 status \
+dist/v0.1.3/codex-speed-patch-darwin-arm64 status \
   --app "/Applications/ChatGPT.app"
 ```
 
@@ -152,7 +158,7 @@ State values:
 
 - `original`: the patch is not active.
 - `patched`: the patch is active.
-- `partial`: a legacy partial patch is present, without complete request coverage.
+- `partial`: UI, request paths, or the embedded CLI catalog still require repair.
 - `unknown`: the installed version does not match a safe patch rule.
 - `restored`: the manifest records a completed rollback.
 
@@ -295,22 +301,22 @@ codex-speed-patch remove-hook
 
 Go `1.24` or newer is required.
 
-JavaScript request and policy runtime regression tests also require Node.js; they explicitly skip when Node.js is absent.
+Runtime regression tests require Node.js; the complete suite cannot pass without it.
 
 ```bash
 go test ./...
 go vet ./...
 go build ./cmd/codex-speed-patch
 
-GOOS=darwin GOARCH=arm64 go build -o dist/v0.1.2/codex-speed-patch-darwin-arm64 ./cmd/codex-speed-patch
-GOOS=darwin GOARCH=amd64 go build -o dist/v0.1.2/codex-speed-patch-darwin-amd64 ./cmd/codex-speed-patch
-GOOS=linux GOARCH=amd64 go build -o dist/v0.1.2/codex-speed-patch-linux-amd64 ./cmd/codex-speed-patch
-GOOS=linux GOARCH=arm64 go build -o dist/v0.1.2/codex-speed-patch-linux-arm64 ./cmd/codex-speed-patch
-GOOS=windows GOARCH=amd64 go build -o dist/v0.1.2/codex-speed-patch-windows-amd64.exe ./cmd/codex-speed-patch
-GOOS=windows GOARCH=arm64 go build -o dist/v0.1.2/codex-speed-patch-windows-arm64.exe ./cmd/codex-speed-patch
+GOOS=darwin GOARCH=arm64 go build -o dist/v0.1.3/codex-speed-patch-darwin-arm64 ./cmd/codex-speed-patch
+GOOS=darwin GOARCH=amd64 go build -o dist/v0.1.3/codex-speed-patch-darwin-amd64 ./cmd/codex-speed-patch
+GOOS=linux GOARCH=amd64 go build -o dist/v0.1.3/codex-speed-patch-linux-amd64 ./cmd/codex-speed-patch
+GOOS=linux GOARCH=arm64 go build -o dist/v0.1.3/codex-speed-patch-linux-arm64 ./cmd/codex-speed-patch
+GOOS=windows GOARCH=amd64 go build -o dist/v0.1.3/codex-speed-patch-windows-amd64.exe ./cmd/codex-speed-patch
+GOOS=windows GOARCH=arm64 go build -o dist/v0.1.3/codex-speed-patch-windows-arm64.exe ./cmd/codex-speed-patch
 ```
 
-Local `0.1.2` checksums are in `dist/v0.1.2/SHA256SUMS.txt`. [CHECKSUMS.txt](CHECKSUMS.txt) records only historical `v0.1.0` binary checksums.
+Local `0.1.3` checksums are in `dist/v0.1.3/SHA256SUMS.txt`. [CHECKSUMS.txt](CHECKSUMS.txt) records only historical `v0.1.0` binary checksums.
 
 ## State Files
 
