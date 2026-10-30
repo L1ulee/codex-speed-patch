@@ -8,20 +8,30 @@ The patcher reuses Codex's existing model catalog, `service_tiers`, `service_tie
 
 ## Current Status
 
-- Patcher version: `0.1.3`
-- macOS test date: `2026-10-17`
-- Codex Desktop tested for this release: `26.1013.40934`; previously tested: `26.1007.30912`
+- Patcher version: `0.1.4`; patch rule: `speed-mode-api-v6`
+- macOS test date: `2026-10-30`
+- Codex Desktop tested for this release: `26.1021.31345`; previously tested: `26.1013.40934`, `26.1007.30912`
 
 The isolated copy passed these checks:
 
-- CLI/app-server initialization, stable application startup, and normal shutdown.
-- Native Speed submenus, selected Ultrafast values, and Speed command interactions for `gpt-6.1-sol`, `gpt-5.6-sol`, and `gpt-6-astra`.
-- Other visible models retain the ordinary Fast control and `priority` mapping; explicit policy denials remain effective.
-- A local mock upstream captured `service_tier: ultrafast` on the first turn, reasoning continuation, and desktop-derived thread for all three models. Ordinary Fast requests retained `priority`.
+- For a custom provider without an OpenAI identity, the native model query retains Ultra for `gpt-6.1-sol`, `gpt-5.6-sol`, and `gpt-6-astra`. With all preferences enabled, it returns `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`.
+- Explicit Ultra opt-outs, disabled preferences, model capabilities, and the native gates for other authentication methods remain effective.
+- Regression checks for Speed controls and request permissions, saved-tier readers, upgrades, and repeated patching.
+- The app remained stable for 12 seconds, and its main process exited normally.
 - `codesign --verify --deep --strict`, nested CLI signing, and Sparkle signer-chain checks.
 - The full Go test suite and `go vet`.
 
-The production app completed bundle replacement and startup checks, with deployment state `deployed`. This does not confirm Ultrafast interactions in a real account or support by the actual upstream. Real upstream requests, autonomous subagent tools, Keychain, push notifications, and actual official update installation still require end-to-end verification. Windows/Linux release binaries were cross-compiled and checked for format only.
+This release passed isolated validation. The production deployment before publication was cancelled because the app or its helpers did not exit within 30 seconds, so production UI interactions remain unconfirmed. Fully exit the app and its update helpers before deploying again. Windows/Linux release binaries were cross-compiled and checked for format only. Real upstream requests, autonomous subagent tools, Keychain, push notifications, and actual official update installation still require end-to-end verification.
+
+## 0.1.4 Fixes
+
+- Restores Speed controls and request-tier access when `requires_openai_auth = false` and no OpenAI account is signed in. Only an explicit `account: null` with `requiresOpenaiAuth: false` enables this Speed path; global login state, unknown identities, and explicit Fast/Ultrafast policy denials retain their behavior.
+- Restores reasoning Ultra in the native model query for API-key authentication and custom providers without an OpenAI identity. The latter requires an explicit `isCustomModelProvider: true` and a null identity. ChatGPT authentication keeps its existing gate.
+- Retains explicit Ultra opt-outs, preferences, and model capabilities. Models without declared support do not gain additional reasoning levels.
+- Detects the API-only v4/v5 gate as requiring an upgrade, validates parameter bindings, rejects ambiguous query layouts, and remains idempotent.
+- Preserves the original CLI hash during partial-patch upgrades so the original backup keeps its verification metadata.
+
+Enable Max/Ultra as needed in `Model features → Available reasoning efforts`. Max is not forced on; each model retains its declared capabilities. `Light` is the native display label for `low`.
 
 ## 0.1.3 Fixes
 
@@ -30,6 +40,8 @@ The production app completed bundle replacement and startup checks, with deploym
 - Updates the embedded CLI model catalog as well as the UI, preventing the CLI from dropping `ultrafast` from requests. Equal-length replacement preserves executable offsets, unknown metadata, and bytes outside the catalog.
 - Reuses whitespace reserved by earlier patches when extending the catalog, fixing false insufficient-space errors and preserving idempotency.
 - Detects the nested `codex-cli/CodexCLI.app` and re-signs it only when the CLI changes. Status and deployment checks validate CLI hashes; rollback retains original ASAR and CLI backups.
+
+This release previously passed native Speed submenu, selected-Ultrafast, and command checks for all three models. A local mock upstream captured `ultrafast`/`priority` on first turns, reasoning continuations, and desktop-derived threads; production bundle replacement and startup checks also completed.
 
 ## 0.1.2 Fixes
 
@@ -130,7 +142,7 @@ These capabilities may be affected. A full official application backup restores 
 
 ### 1. Select a Binary
 
-Download your platform binary and `SHA256SUMS.txt` from the [v0.1.3 Release](https://github.com/L1ulee/codex-speed-patch/releases/tag/v0.1.3). Local source builds are in `dist/v0.1.3/`; verify against the checksum manifest from the same Release.
+Download your platform binary and `SHA256SUMS.txt` from the [v0.1.4 Release](https://github.com/L1ulee/codex-speed-patch/releases/tag/v0.1.4). Local source builds are in `dist/v0.1.4/`; verify against the checksum manifest from the same Release.
 
 ```text
 codex-speed-patch-darwin-arm64
@@ -144,13 +156,13 @@ codex-speed-patch-windows-arm64.exe
 macOS example:
 
 ```bash
-chmod +x dist/v0.1.3/codex-speed-patch-darwin-arm64
+chmod +x dist/v0.1.4/codex-speed-patch-darwin-arm64
 ```
 
 ### 2. Inspect the State
 
 ```bash
-dist/v0.1.3/codex-speed-patch-darwin-arm64 status \
+dist/v0.1.4/codex-speed-patch-darwin-arm64 status \
   --app "/Applications/ChatGPT.app"
 ```
 
@@ -308,15 +320,15 @@ go test ./...
 go vet ./...
 go build ./cmd/codex-speed-patch
 
-GOOS=darwin GOARCH=arm64 go build -o dist/v0.1.3/codex-speed-patch-darwin-arm64 ./cmd/codex-speed-patch
-GOOS=darwin GOARCH=amd64 go build -o dist/v0.1.3/codex-speed-patch-darwin-amd64 ./cmd/codex-speed-patch
-GOOS=linux GOARCH=amd64 go build -o dist/v0.1.3/codex-speed-patch-linux-amd64 ./cmd/codex-speed-patch
-GOOS=linux GOARCH=arm64 go build -o dist/v0.1.3/codex-speed-patch-linux-arm64 ./cmd/codex-speed-patch
-GOOS=windows GOARCH=amd64 go build -o dist/v0.1.3/codex-speed-patch-windows-amd64.exe ./cmd/codex-speed-patch
-GOOS=windows GOARCH=arm64 go build -o dist/v0.1.3/codex-speed-patch-windows-arm64.exe ./cmd/codex-speed-patch
+GOOS=darwin GOARCH=arm64 go build -o dist/v0.1.4/codex-speed-patch-darwin-arm64 ./cmd/codex-speed-patch
+GOOS=darwin GOARCH=amd64 go build -o dist/v0.1.4/codex-speed-patch-darwin-amd64 ./cmd/codex-speed-patch
+GOOS=linux GOARCH=amd64 go build -o dist/v0.1.4/codex-speed-patch-linux-amd64 ./cmd/codex-speed-patch
+GOOS=linux GOARCH=arm64 go build -o dist/v0.1.4/codex-speed-patch-linux-arm64 ./cmd/codex-speed-patch
+GOOS=windows GOARCH=amd64 go build -o dist/v0.1.4/codex-speed-patch-windows-amd64.exe ./cmd/codex-speed-patch
+GOOS=windows GOARCH=arm64 go build -o dist/v0.1.4/codex-speed-patch-windows-arm64.exe ./cmd/codex-speed-patch
 ```
 
-Local `0.1.3` checksums are in `dist/v0.1.3/SHA256SUMS.txt`. [CHECKSUMS.txt](CHECKSUMS.txt) records only historical `v0.1.0` binary checksums.
+Local `0.1.4` checksums are in `dist/v0.1.4/SHA256SUMS.txt`. [CHECKSUMS.txt](CHECKSUMS.txt) records only historical `v0.1.0` binary checksums.
 
 ## State Files
 
@@ -336,6 +348,7 @@ The default state directory is:
 
 ## Known Limitations
 
+- Reasoning `ultra` is independent of speed `ultrafast`. The bundled CLI sends `xhigh` for the native Ultra mode on `gpt-6.1-sol`; this release restores the control while retaining that execution behavior.
 - A Codex frontend change can cause the existing semantic rule to return `unknown`.
 - Replaced bundles use ad-hoc signatures; capabilities depending on the official Developer ID still require verification.
 - The automatic updater itself may depend on the official signing identity.

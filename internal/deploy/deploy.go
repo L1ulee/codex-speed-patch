@@ -195,6 +195,9 @@ func (s Service) Prepare(sessionID string) (result *Result, err error) {
 	if current.Status == asar.StatusPartial && current.Manifest != nil && current.Manifest.AppPath == inst.AppPath && current.Manifest.AppVersion == inst.Version && current.Manifest.BackupDir != "" {
 		backupDir = current.Manifest.BackupDir
 		backupHash = current.Manifest.OriginalAsarSHA256
+		if current.Manifest.OriginalCLISHA256 != "" {
+			manifest.OriginalCLISHA256 = current.Manifest.OriginalCLISHA256
+		}
 		if err := verifyBundle(filepath.Join(backupDir, "ChatGPT.app"), inst.Version, backupHash, false); err != nil {
 			return nil, fmt.Errorf("verify existing original backup: %w", err)
 		}

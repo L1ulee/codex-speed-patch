@@ -21,6 +21,7 @@ var (
 
 type ruleReport struct {
 	ui, readers, policies, tierMenus, tierLookups int
+	effortQueries                                 int
 	patched                                       int
 	edits                                         []Candidate
 }
@@ -77,32 +78,13 @@ func scanRules(entry Entry, data []byte) (ruleReport, error) {
 	r.ui += count
 	r.patched += count
 
-	// New desktop builds return separate fast/ultrafast permissions. Keep that
-	// policy conversion intact, but include API-key authentication in its input.
-	if i := bytes.Index(data, []byte("serviceTierAccess:")); i >= 0 {
-		start := bytes.LastIndex(data[:i], []byte("function "))
-		if start >= 0 {
-			end := nextDeclaration(data, i)
-			region := data[start:end]
-			ms := accessAuth.FindAllSubmatchIndex(region, -1)
-			ps := accessAuthPatched.FindAllIndex(region, -1)
-			if len(ms)+len(ps) > 1 {
-				return r, fmt.Errorf("multiple speed-access auth checks in %s", entry.Path)
-			}
-			if len(ms) == 1 {
-				m := ms[0]
-				if !bytes.Equal(region[m[2]:m[3]], region[m[4]:m[5]]) {
-					return r, fmt.Errorf("speed-access variables differ")
-				}
-				value := string(region[m[2]:m[3]])
-				r.ui++
-				r.add(entry, data, start+m[0], start+m[1], "/^(chatgpt|personalAccessToken|apikey)$/.test("+value+"?.authMethod)")
-			} else if len(ps) == 1 {
-				r.ui++
-				r.patched++
-			}
-		}
+	access, err := scanSpeedAccess(entry, data)
+	if err != nil {
+		return r, err
 	}
+	r.ui += access.ui
+	r.patched += access.patched
+	r.edits = append(r.edits, access.edits...)
 
 	if bytes.Contains(data, []byte("Failed to read saved service tier for request")) {
 		start, end, err := functionRegion(data, "Failed to read saved service tier for request")
@@ -162,6 +144,12 @@ func scanRules(entry Entry, data []byte) (ruleReport, error) {
 			value := string(helper[m[2]:m[3]])
 			r.add(entry, data, helperStart+m[0], helperStart+m[1], "!/^(chatgpt|personalAccessToken|apikey)$/.test("+value+")")
 		}
+		accountReader, err := scanSpeedAccountReader(entry, data, helper)
+		if err != nil {
+			return r, err
+		}
+		r.patched += accountReader.patched
+		r.edits = append(r.edits, accountReader.edits...)
 	}
 	return r, nil
 }

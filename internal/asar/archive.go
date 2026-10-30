@@ -204,7 +204,17 @@ func (a *Archive) Probe() (*ProbeResult, error) {
 		if err != nil {
 			return nil, err
 		}
-		if r.ui+r.readers+r.policies > 0 {
+		efforts, err := scanEffortRules(entry, data)
+		if err != nil {
+			return nil, err
+		}
+		report.effortQueries += efforts.effortQueries
+		if report.effortQueries > 1 {
+			return nil, errors.New("multiple native effort queries across ASAR assets")
+		}
+		r.patched += efforts.patched
+		r.edits = append(r.edits, efforts.edits...)
+		if r.ui+r.readers+r.policies+efforts.effortQueries > 0 {
 			paths = append(paths, entry.Path)
 		}
 		if r.ui > 0 {

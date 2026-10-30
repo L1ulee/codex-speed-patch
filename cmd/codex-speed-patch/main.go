@@ -19,7 +19,7 @@ import (
 	"codex-speed-patch/internal/state"
 )
 
-const version = "0.1.3"
+const version = "0.1.4"
 
 type hookInput struct {
 	SessionID string `json:"session_id"`
