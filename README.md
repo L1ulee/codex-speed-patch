@@ -8,20 +8,26 @@
 
 ## 当前状态
 
-- 补丁器版本：`0.1.4`，补丁规则：`speed-mode-api-v6`
-- macOS 实测日期：`2026-10-30`
-- 本版已测试 Codex Desktop：`26.1021.31345`；此前已测试 `26.1013.40934`、`26.1007.30912`
+- 补丁器版本：`0.1.5`，补丁规则：`speed-mode-api-v6`
+- macOS 实测日期：`2026-11-01`
+- 最新验证 Codex Desktop：`26.1027.51404`（build `23880`）；此前已测试 `26.1021.31345`、`26.1013.40934`、`26.1007.30912`
 
-本版隔离副本已通过以下检查：
+本版更新版本号和验证说明，补丁逻辑与 `0.1.4` 一致。最新对照结果如下：
 
-- 无 OpenAI 登录身份的 custom provider：原生模型查询为 `gpt-6.1-sol`、`gpt-5.6-sol`、`gpt-6-astra` 保留 Ultra；启用全部偏好时返回 `low`、`medium`、`high`、`xhigh`、`max`、`ultra`。
-- Ultra 显式关闭、偏好取消勾选、模型能力限制及其他登录方式的原生开关仍有效。
-- Speed 控件和请求权限、保存档位读取、旧补丁升级及重复修补回归。
-- 应用稳定运行 12 秒，主进程正常退出。
-- `codesign --verify --deep --strict`、嵌套 CLI 与 Sparkle 更新签名链检查。
+- 正式应用在授权准备副本并清理孤立崩溃监控后，完成 v6 整包部署、签名与启动检查，部署记录为 `deployed`，并保留新版官方完整备份。CLI 仍只请求正常退出；辅助进程未退出时会取消部署。
+- 原生 CLI 的 `model/list` 为 `gpt-6.1-sol`、`gpt-5.6-sol`、`gpt-6-astra` 返回 `priority`（Fast）和 `ultrafast`，配置要求没有关闭这些档位。
+- 用户确认独立浏览器资料的测试窗口中 Fast／Ultrafast 可见且可切换；该测试窗口读取正式 Codex 配置目录后仍可切换。
 - 全量 Go 测试和 `go vet`。
 
-本版已完成隔离验证。发布前的正式部署因应用或辅助进程未在 30 秒内退出而取消，因此本版正式界面交互尚待确认；需完全退出相关应用和更新辅助程序后再部署。Windows/Linux 发布产物仅完成交叉构建与格式检查。真实上游、自动派生子代理工具、Keychain、推送和实际官方更新安装仍待端到端验证。
+**已知问题：** 正式浏览器资料下，新旧聊天均仍缺少 Speed／闪电控件。对照结果指向浏览器资料相关状态，具体原因与修复仍待完成；不能仅凭 `deployment.status: deployed` 判断控件已正常显示。
+
+Windows/Linux 发布产物仅完成交叉构建与格式检查。真实上游、自动派生子代理工具、Keychain、推送和实际官方更新安装仍待端到端验证。
+
+## 0.1.5 验证说明更新
+
+- CLI 升版为 `0.1.5`，沿用 `speed-mode-api-v6` 补丁规则。
+- 补充 `26.1027.51404` 的正式部署与独立浏览器资料对照结果，明确记录尚未解决的 Speed 显示问题。
+- 更新中英文说明、下载链接和六平台构建示例。
 
 ## 0.1.4 修复
 
@@ -32,6 +38,8 @@
 - 修复部分补丁升级时原始 CLI 哈希被覆盖的问题，保留原始 CLI 备份的校验依据。
 
 在设置的 `Model features → Available reasoning efforts` 中按需启用 Max／Ultra；Max 不会被强制勾选，各模型显示的档位仍以自身能力为准。`Light` 是 `low` 的原生显示文案。
+
+0.1.4 在 `26.1021.31345` 的隔离验证覆盖 `low`、`medium`、`high`、`xhigh`、`max`、`ultra` 六档、显式关闭和偏好过滤、模型能力限制、其他登录方式的原生开关、Speed 控件与请求权限、保存档位读取、旧补丁升级和重复修补。应用稳定运行 12 秒，主进程正常退出，并通过 `codesign --verify --deep --strict`、嵌套 CLI 与 Sparkle 更新签名链检查。
 
 ## 0.1.3 修复
 
@@ -142,7 +150,7 @@ ad-hoc 签名不能保留 OpenAI Developer ID 和原始 TeamIdentifier，可能�
 
 ### 1. 选择二进制
 
-从 [v0.1.4 Release](https://github.com/L1ulee/codex-speed-patch/releases/tag/v0.1.4) 下载对应平台二进制与 `SHA256SUMS.txt`。源码构建产物位于 `dist/v0.1.4/`；校验值以同一 Release 中的清单为准。
+从 [v0.1.5 Release](https://github.com/L1ulee/codex-speed-patch/releases/tag/v0.1.5) 下载对应平台二进制与 `SHA256SUMS.txt`。源码构建产物位于 `dist/v0.1.5/`；校验值以同一 Release 中的清单为准。
 
 ```text
 codex-speed-patch-darwin-arm64
@@ -156,13 +164,13 @@ codex-speed-patch-windows-arm64.exe
 macOS 示例：
 
 ```bash
-chmod +x dist/v0.1.4/codex-speed-patch-darwin-arm64
+chmod +x dist/v0.1.5/codex-speed-patch-darwin-arm64
 ```
 
 ### 2. 检查状态
 
 ```bash
-dist/v0.1.4/codex-speed-patch-darwin-arm64 status \
+dist/v0.1.5/codex-speed-patch-darwin-arm64 status \
   --app "/Applications/ChatGPT.app"
 ```
 
@@ -320,15 +328,15 @@ go test ./...
 go vet ./...
 go build ./cmd/codex-speed-patch
 
-GOOS=darwin GOARCH=arm64 go build -o dist/v0.1.4/codex-speed-patch-darwin-arm64 ./cmd/codex-speed-patch
-GOOS=darwin GOARCH=amd64 go build -o dist/v0.1.4/codex-speed-patch-darwin-amd64 ./cmd/codex-speed-patch
-GOOS=linux GOARCH=amd64 go build -o dist/v0.1.4/codex-speed-patch-linux-amd64 ./cmd/codex-speed-patch
-GOOS=linux GOARCH=arm64 go build -o dist/v0.1.4/codex-speed-patch-linux-arm64 ./cmd/codex-speed-patch
-GOOS=windows GOARCH=amd64 go build -o dist/v0.1.4/codex-speed-patch-windows-amd64.exe ./cmd/codex-speed-patch
-GOOS=windows GOARCH=arm64 go build -o dist/v0.1.4/codex-speed-patch-windows-arm64.exe ./cmd/codex-speed-patch
+GOOS=darwin GOARCH=arm64 go build -o dist/v0.1.5/codex-speed-patch-darwin-arm64 ./cmd/codex-speed-patch
+GOOS=darwin GOARCH=amd64 go build -o dist/v0.1.5/codex-speed-patch-darwin-amd64 ./cmd/codex-speed-patch
+GOOS=linux GOARCH=amd64 go build -o dist/v0.1.5/codex-speed-patch-linux-amd64 ./cmd/codex-speed-patch
+GOOS=linux GOARCH=arm64 go build -o dist/v0.1.5/codex-speed-patch-linux-arm64 ./cmd/codex-speed-patch
+GOOS=windows GOARCH=amd64 go build -o dist/v0.1.5/codex-speed-patch-windows-amd64.exe ./cmd/codex-speed-patch
+GOOS=windows GOARCH=arm64 go build -o dist/v0.1.5/codex-speed-patch-windows-arm64.exe ./cmd/codex-speed-patch
 ```
 
-本地 `0.1.4` 产物的校验值位于 `dist/v0.1.4/SHA256SUMS.txt`。[CHECKSUMS.txt](CHECKSUMS.txt) 仅记录 `v0.1.0` 的历史二进制校验值。
+本地 `0.1.5` 产物的校验值位于 `dist/v0.1.5/SHA256SUMS.txt`。[CHECKSUMS.txt](CHECKSUMS.txt) 仅记录 `v0.1.0` 的历史二进制校验值。
 
 ## 状态文件
 
@@ -348,7 +356,7 @@ GOOS=windows GOARCH=arm64 go build -o dist/v0.1.4/codex-speed-patch-windows-arm6
 
 ## 已知限制
 
-- reasoning `ultra` 与速度 `ultrafast` 独立。内置 CLI 对 `gpt-6.1-sol` 的原生 Ultra 模式会发送 `xhigh`；本版修复控件显示，保留该执行语义。
+- reasoning `ultra` 与速度 `ultrafast` 独立。内置 CLI 对 `gpt-6.1-sol` 的原生 Ultra 模式会发送 `xhigh`；补丁保留该执行语义。
 - Codex 前端结构变化后，旧语义规则可能返回 `unknown`。
 - 整包替换后的应用使用 ad-hoc 签名，依赖官方 Developer ID 的能力仍需验证。
 - 自动更新程序本身可能依赖官方签名。

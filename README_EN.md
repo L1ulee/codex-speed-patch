@@ -8,20 +8,26 @@ The patcher reuses Codex's existing model catalog, `service_tiers`, `service_tie
 
 ## Current Status
 
-- Patcher version: `0.1.4`; patch rule: `speed-mode-api-v6`
-- macOS test date: `2026-10-30`
-- Codex Desktop tested for this release: `26.1021.31345`; previously tested: `26.1013.40934`, `26.1007.30912`
+- Patcher version: `0.1.5`; patch rule: `speed-mode-api-v6`
+- macOS test date: `2026-11-01`
+- Latest Codex Desktop validation: `26.1027.51404` (build `23880`); previously tested: `26.1021.31345`, `26.1013.40934`, `26.1007.30912`
 
-The isolated copy passed these checks:
+This release updates the version and validation notes. Its patch logic is unchanged from `0.1.4`. The latest comparisons established:
 
-- For a custom provider without an OpenAI identity, the native model query retains Ultra for `gpt-6.1-sol`, `gpt-5.6-sol`, and `gpt-6-astra`. With all preferences enabled, it returns `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`.
-- Explicit Ultra opt-outs, disabled preferences, model capabilities, and the native gates for other authentication methods remain effective.
-- Regression checks for Speed controls and request permissions, saved-tier readers, upgrades, and repeated patching.
-- The app remained stable for 12 seconds, and its main process exited normally.
-- `codesign --verify --deep --strict`, nested CLI signing, and Sparkle signer-chain checks.
+- After authorized copy preparation and orphan crash-monitor cleanup, the installed app completed v6 bundle replacement, signature and startup checks, with deployment state `deployed` and a full backup of the updated official app. The CLI still requests normal shutdown only and cancels deployment if helpers remain.
+- The native CLI's `model/list` returns `priority` (Fast) and `ultrafast` for `gpt-6.1-sol`, `gpt-5.6-sol`, and `gpt-6-astra`; configuration requirements do not disable these tiers.
+- The user confirmed visible, working Fast/Ultrafast controls in the test window with independent browser data. The same test window retained those controls when reading the production Codex configuration directory.
 - The full Go test suite and `go vet`.
 
-This release passed isolated validation. The production deployment before publication was cancelled because the app or its helpers did not exit within 30 seconds, so production UI interactions remain unconfirmed. Fully exit the app and its update helpers before deploying again. Windows/Linux release binaries were cross-compiled and checked for format only. Real upstream requests, autonomous subagent tools, Keychain, push notifications, and actual official update installation still require end-to-end verification.
+**Known issue:** With the production browser data, both existing and new chats still lack the Speed/lightning control. The comparison points to browser-data-related state; the specific cause and fix remain unresolved. `deployment.status: deployed` alone does not establish that the control is visible.
+
+Windows/Linux release binaries were cross-compiled and checked for format only. Real upstream requests, autonomous subagent tools, Keychain, push notifications, and actual official update installation still require end-to-end verification.
+
+## 0.1.5 Validation Notes
+
+- Bumps the CLI to `0.1.5`, retaining patch rule `speed-mode-api-v6`.
+- Adds production deployment and independent-browser-data comparisons for `26.1027.51404`, with the unresolved Speed visibility issue recorded explicitly.
+- Updates both READMEs, download links, and six-platform build examples.
 
 ## 0.1.4 Fixes
 
@@ -32,6 +38,8 @@ This release passed isolated validation. The production deployment before public
 - Preserves the original CLI hash during partial-patch upgrades so the original backup keeps its verification metadata.
 
 Enable Max/Ultra as needed in `Model features → Available reasoning efforts`. Max is not forced on; each model retains its declared capabilities. `Light` is the native display label for `low`.
+
+Validation of 0.1.4 on an isolated `26.1021.31345` copy covered all six levels (`low`, `medium`, `high`, `xhigh`, `max`, `ultra`), explicit opt-outs and preference filtering, model capabilities, native gates for other authentication methods, Speed controls and request permissions, saved-tier readers, upgrades, and idempotency. The app remained stable for 12 seconds, its main process exited normally, and `codesign --verify --deep --strict`, nested CLI, and Sparkle signer-chain checks passed.
 
 ## 0.1.3 Fixes
 
@@ -142,7 +150,7 @@ These capabilities may be affected. A full official application backup restores 
 
 ### 1. Select a Binary
 
-Download your platform binary and `SHA256SUMS.txt` from the [v0.1.4 Release](https://github.com/L1ulee/codex-speed-patch/releases/tag/v0.1.4). Local source builds are in `dist/v0.1.4/`; verify against the checksum manifest from the same Release.
+Download your platform binary and `SHA256SUMS.txt` from the [v0.1.5 Release](https://github.com/L1ulee/codex-speed-patch/releases/tag/v0.1.5). Local source builds are in `dist/v0.1.5/`; verify against the checksum manifest from the same Release.
 
 ```text
 codex-speed-patch-darwin-arm64
@@ -156,13 +164,13 @@ codex-speed-patch-windows-arm64.exe
 macOS example:
 
 ```bash
-chmod +x dist/v0.1.4/codex-speed-patch-darwin-arm64
+chmod +x dist/v0.1.5/codex-speed-patch-darwin-arm64
 ```
 
 ### 2. Inspect the State
 
 ```bash
-dist/v0.1.4/codex-speed-patch-darwin-arm64 status \
+dist/v0.1.5/codex-speed-patch-darwin-arm64 status \
   --app "/Applications/ChatGPT.app"
 ```
 
@@ -320,15 +328,15 @@ go test ./...
 go vet ./...
 go build ./cmd/codex-speed-patch
 
-GOOS=darwin GOARCH=arm64 go build -o dist/v0.1.4/codex-speed-patch-darwin-arm64 ./cmd/codex-speed-patch
-GOOS=darwin GOARCH=amd64 go build -o dist/v0.1.4/codex-speed-patch-darwin-amd64 ./cmd/codex-speed-patch
-GOOS=linux GOARCH=amd64 go build -o dist/v0.1.4/codex-speed-patch-linux-amd64 ./cmd/codex-speed-patch
-GOOS=linux GOARCH=arm64 go build -o dist/v0.1.4/codex-speed-patch-linux-arm64 ./cmd/codex-speed-patch
-GOOS=windows GOARCH=amd64 go build -o dist/v0.1.4/codex-speed-patch-windows-amd64.exe ./cmd/codex-speed-patch
-GOOS=windows GOARCH=arm64 go build -o dist/v0.1.4/codex-speed-patch-windows-arm64.exe ./cmd/codex-speed-patch
+GOOS=darwin GOARCH=arm64 go build -o dist/v0.1.5/codex-speed-patch-darwin-arm64 ./cmd/codex-speed-patch
+GOOS=darwin GOARCH=amd64 go build -o dist/v0.1.5/codex-speed-patch-darwin-amd64 ./cmd/codex-speed-patch
+GOOS=linux GOARCH=amd64 go build -o dist/v0.1.5/codex-speed-patch-linux-amd64 ./cmd/codex-speed-patch
+GOOS=linux GOARCH=arm64 go build -o dist/v0.1.5/codex-speed-patch-linux-arm64 ./cmd/codex-speed-patch
+GOOS=windows GOARCH=amd64 go build -o dist/v0.1.5/codex-speed-patch-windows-amd64.exe ./cmd/codex-speed-patch
+GOOS=windows GOARCH=arm64 go build -o dist/v0.1.5/codex-speed-patch-windows-arm64.exe ./cmd/codex-speed-patch
 ```
 
-Local `0.1.4` checksums are in `dist/v0.1.4/SHA256SUMS.txt`. [CHECKSUMS.txt](CHECKSUMS.txt) records only historical `v0.1.0` binary checksums.
+Local `0.1.5` checksums are in `dist/v0.1.5/SHA256SUMS.txt`. [CHECKSUMS.txt](CHECKSUMS.txt) records only historical `v0.1.0` binary checksums.
 
 ## State Files
 
@@ -348,7 +356,7 @@ The default state directory is:
 
 ## Known Limitations
 
-- Reasoning `ultra` is independent of speed `ultrafast`. The bundled CLI sends `xhigh` for the native Ultra mode on `gpt-6.1-sol`; this release restores the control while retaining that execution behavior.
+- Reasoning `ultra` is independent of speed `ultrafast`. The bundled CLI sends `xhigh` for the native Ultra mode on `gpt-6.1-sol`; the patch retains that execution behavior.
 - A Codex frontend change can cause the existing semantic rule to return `unknown`.
 - Replaced bundles use ad-hoc signatures; capabilities depending on the official Developer ID still require verification.
 - The automatic updater itself may depend on the official signing identity.
