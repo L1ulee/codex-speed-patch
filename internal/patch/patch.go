@@ -19,7 +19,7 @@ import (
 	"codex-speed-patch/internal/state"
 )
 
-const RuleVersion = "speed-mode-api-v6"
+const RuleVersion = "speed-mode-api-v8"
 const CreatedDate = "2026-09-06"
 
 type Service struct {

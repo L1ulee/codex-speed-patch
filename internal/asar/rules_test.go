@@ -140,3 +140,17 @@ func TestReaderWithDifferentCallbackIsRejected(t *testing.T) {
 		t.Fatal("unsupported authentication callback was accepted")
 	}
 }
+
+func TestRspackModuleScopedRequestPolicyAllowsDuplicateHelperNames(t *testing.T) {
+	content := "export const __webpack_modules__={other(e,t,n){async function allowed(e,t){return null}},PAzX(e,t,n){" + requestFixture + "}};"
+	report, err := scanRules(Entry{Path: "webview/assets/async/chunk.js"}, []byte(content))
+	if err != nil {
+		t.Fatalf("Rspack module-scoped request policy was rejected: %v", err)
+	}
+	if report.policies != 1 {
+		t.Fatalf("request policy count = %d, want 1", report.policies)
+	}
+	if len(report.edits) == 0 {
+		t.Fatal("Rspack request policy did not produce an API-access repair")
+	}
+}

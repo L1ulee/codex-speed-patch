@@ -12,10 +12,12 @@ const tierHelperName = "__codexSpeedPatchModelTiersV3"
 const tierHelperMarker = "/*codex-speed-model-tiers-v3*/"
 
 var (
-	ultrafastVariant   = regexp.MustCompile("\\[`([^`]+)-ultrafast`,(" + identifier + `\.` + identifier + `)\]`)
-	modelDescription   = regexp.MustCompile("\\[`([^`]+)`," + identifier + `\.` + identifier + `\]`)
-	tierOptions        = regexp.MustCompile(`function (` + identifier + `)\((` + identifier + `)\)\{return (` + identifier + `)\((` + identifier + `)\?\.model,(` + identifier + `)\?\.serviceTiers\)\}`)
-	tierOptionsPatched = regexp.MustCompile(`function (` + identifier + `)\((` + identifier + `)\)\{return (` + identifier + `)\((` + identifier + `)\?\.model,` + tierHelperName + `\((` + identifier + `)\)\)\}`)
+	ultrafastVariant     = regexp.MustCompile("\\[`([^`]+)-ultrafast`,(" + identifier + `\.` + identifier + `)\]`)
+	modelDescription     = regexp.MustCompile("\\[`([^`]+)`," + identifier + `\.` + identifier + `\]`)
+	ultrafastVariantJSON = regexp.MustCompile(`\["([^"]+)-ultrafast",(` + identifier + `\.` + identifier + `)\]`)
+	modelDescriptionJSON = regexp.MustCompile(`\["([^"]+)",` + identifier + `\.` + identifier + `\]`)
+	tierOptions          = regexp.MustCompile(`function (` + identifier + `)\((` + identifier + `)\)\{return (` + identifier + `)\((` + identifier + `)\?\.model,(` + identifier + `)\?\.serviceTiers\)\}`)
+	tierOptionsPatched   = regexp.MustCompile(`function (` + identifier + `)\((` + identifier + `)\)\{return (` + identifier + `)\((` + identifier + `)\?\.model,` + tierHelperName + `\((` + identifier + `)\)\)\}`)
 )
 
 // Prefer paired native tier variants. These three operator-confirmed models
@@ -33,6 +35,18 @@ func nativeUltrafastModels(data []byte) []string {
 		}
 	}
 	for _, match := range modelDescription.FindAllSubmatch(data, -1) {
+		switch model := string(match[1]); model {
+		case "gpt-6.1-sol", "gpt-5.6-sol", "gpt-6-astra":
+			result = append(result, model)
+		}
+	}
+	for _, match := range ultrafastVariantJSON.FindAllSubmatch(data, -1) {
+		base := `["` + string(match[1]) + `",` + string(match[2]) + "]"
+		if bytes.Contains(data, []byte(base)) {
+			result = append(result, string(match[1]))
+		}
+	}
+	for _, match := range modelDescriptionJSON.FindAllSubmatch(data, -1) {
 		switch model := string(match[1]); model {
 		case "gpt-6.1-sol", "gpt-5.6-sol", "gpt-6-astra":
 			result = append(result, model)
@@ -74,6 +88,7 @@ func scanTierRules(entry Entry, data []byte, models []string) (ruleReport, error
 		match = original[0]
 	}
 	if match != nil {
+		report.tierMenusRspack = len(rspackModule.FindAllIndex(data, -1)) > 0
 		if value(2) != value(4) || value(2) != value(5) {
 			return report, fmt.Errorf("model-tier option variables differ in %s", entry.Path)
 		}

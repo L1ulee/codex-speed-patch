@@ -188,6 +188,10 @@ func (a *Archive) Probe() (*ProbeResult, error) {
 		data  []byte
 	}
 	var tierAssets []tierAsset
+	var accountAssets []tierAsset
+	references := make(map[rspackReference]bool)
+	policyModules := make(map[string]bool)
+	effortModules := make(map[string]bool)
 	for _, entry := range a.Entries() {
 		if !isJavaScript(entry) {
 			continue
@@ -197,6 +201,9 @@ func (a *Archive) Probe() (*ProbeResult, error) {
 			return nil, err
 		}
 		models = append(models, nativeUltrafastModels(data)...)
+		if bytes.Contains(data, []byte(".getAccount(")) && bytes.Contains(data, []byte("__webpack_modules__=")) {
+			accountAssets = append(accountAssets, tierAsset{entry, data})
+		}
 		if !strings.HasPrefix(entry.Path, ".vite/") && (bytes.Contains(data, []byte("?.serviceTiers")) || bytes.Contains(data, []byte(tierHelperName))) {
 			tierAssets = append(tierAssets, tierAsset{entry, data})
 		}
@@ -208,8 +215,12 @@ func (a *Archive) Probe() (*ProbeResult, error) {
 		if err != nil {
 			return nil, err
 		}
-		report.effortQueries += efforts.effortQueries
-		if report.effortQueries > 1 {
+		if efforts.effortModule != "" {
+			effortModules[efforts.effortModule] = true
+		} else {
+			report.effortQueries += efforts.effortQueries
+		}
+		if report.effortQueries+len(effortModules) > 1 {
 			return nil, errors.New("multiple native effort queries across ASAR assets")
 		}
 		r.patched += efforts.patched
@@ -222,9 +233,40 @@ func (a *Archive) Probe() (*ProbeResult, error) {
 		}
 		report.ui += r.ui
 		report.readers += r.readers
-		report.policies += r.policies
+		if r.policyModule != "" {
+			policyModules[r.policyModule] = true
+		} else {
+			report.policies += r.policies
+		}
+		for _, reference := range r.accountReferences {
+			references[reference] = false
+		}
 		report.patched += r.patched
 		report.edits = append(report.edits, r.edits...)
+	}
+	report.policies += len(policyModules)
+	report.effortQueries += len(effortModules)
+	for _, asset := range accountAssets {
+		r, err := scanRspackAccountReaders(asset.entry, asset.data, references)
+		if err != nil {
+			return nil, err
+		}
+		if len(r.edits) > 0 {
+			found := false
+			for _, path := range paths {
+				found = found || path == asset.entry.Path
+			}
+			if !found {
+				paths = append(paths, asset.entry.Path)
+			}
+		}
+		report.patched += r.patched
+		report.edits = append(report.edits, r.edits...)
+	}
+	for reference, found := range references {
+		if !found {
+			return nil, fmt.Errorf("Speed identity module %s.%s is missing", reference.module, reference.export)
+		}
 	}
 	for _, asset := range tierAssets {
 		r, err := scanTierRules(asset.entry, asset.data, sortedModels(models))
@@ -242,14 +284,15 @@ func (a *Archive) Probe() (*ProbeResult, error) {
 		}
 		report.tierMenus += r.tierMenus
 		report.tierLookups += r.tierLookups
+		report.tierMenusRspack = report.tierMenusRspack || r.tierMenusRspack
 		report.patched += r.patched
 		report.edits = append(report.edits, r.edits...)
 	}
 	result := &ProbeResult{Status: StatusUnknown, TargetPath: uiPath, TargetPaths: paths, Candidates: report.edits, UltrafastModels: sortedModels(models)}
-	tiersComplete := report.tierMenus == 0 && report.tierLookups == 0 || report.tierMenus == 1 && report.tierLookups == 1
-	complete := report.ui == 1 && report.policies == 1 && report.readers >= 1 && report.readers <= 2 && tiersComplete
+	tiersComplete := report.tierMenus == 0 && report.tierLookups == 0 || report.tierMenus == 1 && report.tierLookups == 1 || report.tierMenusRspack && report.tierLookups == 0
+	complete := report.ui >= 1 && report.policies == 1 && report.readers >= 1 && report.readers <= 2 && tiersComplete
 	if !complete {
-		if report.ui == 1 && report.patched > 0 {
+		if report.ui >= 1 && report.patched > 0 {
 			result.Status = StatusPartial
 		}
 		return result, nil
