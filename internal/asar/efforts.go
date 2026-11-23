@@ -42,7 +42,7 @@ func computedEffortProvider(region []byte) (string, error) {
 		return "", fmt.Errorf("native effort provider selector is ambiguous")
 	}
 	custom := string(matches[0][1])
-	binding := regexp.MustCompile(regexp.QuoteMeta(custom) + `=\(0,` + identifier + `\.cc\)\((` + identifier + `)\)`)
+	binding := regexp.MustCompile(regexp.QuoteMeta(custom) + `=\(0,` + identifier + `\.cc\)\((` + identifier + `)(?:,(` + identifier + `))?\)`)
 	bindings := binding.FindAllSubmatch(region, -1)
 	if len(bindings) != 1 {
 		return "", fmt.Errorf("native effort provider has no unique config binding")
@@ -50,6 +50,15 @@ func computedEffortProvider(region []byte) (string, error) {
 	config := string(bindings[0][1])
 	if !bytes.Contains(region, []byte(config+"?.model_provider")) && !bytes.Contains(region, []byte(config+".model_provider")) {
 		return "", fmt.Errorf("native effort provider does not use the query config")
+	}
+	if len(bindings[0][2]) > 0 {
+		// The override belongs to this query only when model/list receives the
+		// same value. Preserve the native detector and both of its arguments.
+		provider := regexp.MustCompile(`modelProvider:(` + identifier + `)(?:,|\})`)
+		requests := provider.FindAllSubmatch(region, -1)
+		if len(requests) != 1 || !bytes.Equal(requests[0][1], bindings[0][2]) {
+			return "", fmt.Errorf("native effort provider override differs from the model request")
+		}
 	}
 	return custom, nil
 }

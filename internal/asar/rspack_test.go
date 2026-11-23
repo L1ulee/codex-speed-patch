@@ -38,12 +38,17 @@ func inlineRspackAssets() map[string][]byte {
 }
 
 func TestRspackInlineReadersAndCopiedModules(t *testing.T) {
+	checkRspackRuntime(t, inlineRspackAssets(), "")
+}
+
+func checkRspackRuntime(t *testing.T, assets map[string][]byte, extraChecks string) {
+	t.Helper()
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Fatal("Node.js is required for native Rspack regression checks")
 	}
 	source := filepath.Join(t.TempDir(), "app.asar")
-	writeMultiFixture(t, source, inlineRspackAssets())
+	writeMultiFixture(t, source, assets)
 	a, err := Open(source)
 	if err != nil {
 		t.Fatal(err)
@@ -103,7 +108,7 @@ const definitions=Object.assign({},...CHUNKS.map(source=>vm.runInNewContext("("+
 const cache={};
 function load(id){
  if(id==="requirements")return{read:()=>client.sendRequest("configRequirements/read"),query:{}};
- if(id==="config")return{cc:config=>config.model_provider!=="openai"};
+ if(id==="config")return{cc:(config,provider)=> (provider??config.model_provider)!=="openai"};
  if(cache[id])return cache[id];
  const exports=cache[id]={};definitions[id]({},exports,load);return exports;
 }
@@ -145,11 +150,79 @@ function efforts(auth=null,include=true,enabled=all,modelEfforts=all){
  assert.deepEqual(efforts(null,true,all,all.slice(0,4)),all.slice(0,4));
  assert.deepEqual(efforts("chatgpt"),all.slice(0,5));
  assert.deepEqual(efforts("unknown"),all.slice(0,5));
+EXTRA_CHECKS
 })().catch(error=>{console.error(error.stack);process.exitCode=1});
 `
 	program := strings.Replace(checks, "CHUNKS", string(encoded), 1)
+	program = strings.Replace(program, "EXTRA_CHECKS", extraChecks, 1)
 	if output, err := exec.Command(node, "-e", program).CombinedOutput(); err != nil {
 		t.Fatalf("native inline reader behavior: %s", output)
+	}
+}
+
+func TestRspackProviderOverrideAndWrappedModules(t *testing.T) {
+	assets := inlineRspackAssets()
+	assets["webview/assets/async/copy.js"] = rspackChunk(wrappedRspackModule(inlinePolicyModule), wrappedRspackModule(inlineAccessModule), wrappedRspackModule(inlineCatalogModule))
+	assets["webview/assets/async/auth-copy.js"] = rspackChunk(wrappedRspackModule(inlineIdentityModule), wrappedRspackModule(strings.Replace(inlineIdentityModule, "identity(", "unrelatedIdentity(", 1)))
+	for name, path := range map[string]string{
+		"hostManager":      ".vite/build/app-server-host.js",
+		"bootstrapManager": ".vite/build/early-bootstrap-fixture.js",
+	} {
+		assets[path] = rspackChunk(strings.Replace(inlineSavedModule, "manager(", name+"(", 1))
+	}
+	for path, data := range assets {
+		content := string(data)
+		content = strings.ReplaceAll(content, "async function(e,t,n,r){try{if(!await r())", "async function(e,t,n,r,provider){try{if(!await r())")
+		content = strings.ReplaceAll(content, `return resolve(null,c.service_tier,accessFor(requirements))`, `await e.sendRequest("model/list",{modelProvider:provider});return resolve(null,c.service_tier,accessFor(requirements))`)
+		content = strings.ReplaceAll(content, "model,async()=>false)", `model,async()=>false,"custom")`)
+		content = strings.ReplaceAll(content, "custom=(0,cfg.cc)(config)", `override=state.providerOverride,custom=(0,cfg.cc)(config,override)`)
+		content = strings.ReplaceAll(content, `client.sendRequest("model/list")`, `client.sendRequest("model/list",{modelProvider:override})`)
+		assets[path] = []byte(content)
+	}
+	checkRspackRuntime(t, assets, `
+ state.providerOverride="openai";
+ assert.deepEqual(efforts(),all.slice(0,5),"provider override retains the default-provider gate");
+ state.providerOverride="custom";
+ assert.deepEqual(efforts(),all,"custom provider override restores Ultra");
+ let requestedProvider;
+ const originalRequest=client.sendRequest;
+ client.sendRequest=async(method,args)=>{if(method==="model/list")requestedProvider=args?.modelProvider;return originalRequest(method,args)};
+ for(const id of ["manager","hostManager","bootstrapManager"]){
+  assert.equal(await load(id).read(null),"priority",id+" retains saved tier");
+  assert.equal(requestedProvider,"custom",id+" forwards the selected provider");
+ }
+ await load("catalog").query({authMethod:null,hostId:"local"},{get:key=>key===configQuery?{data:{config:{model_provider:"openai"}}}:key===preferences?new Set(all):false,queryClient:{},scope:{}}).queryFn();
+ assert.equal(requestedProvider,"custom","query forwards the selected provider");
+ `)
+}
+
+func wrappedRspackModule(module string) string {
+	start := strings.IndexByte(module, '(')
+	return module[:start] + ":(function" + module[start:] + ")"
+}
+
+func TestSavedReaderCopiesRejectUnrelatedOrAdditionalTargets(t *testing.T) {
+	for _, name := range []string{"unrelated third reader", "fourth reader"} {
+		t.Run(name, func(t *testing.T) {
+			assets := inlineRspackAssets()
+			assets[".vite/build/early-bootstrap-fixture.js"] = rspackChunk(inlineSavedModule)
+			if name == "unrelated third reader" {
+				assets["webview/assets/unrelated.js"] = rspackChunk(inlineSavedModule)
+			} else {
+				assets[".vite/build/app-server-host.js"] = rspackChunk(inlineSavedModule)
+				assets["webview/assets/unrelated.js"] = rspackChunk(inlineSavedModule)
+			}
+			path := filepath.Join(t.TempDir(), "app.asar")
+			writeMultiFixture(t, path, assets)
+			a, err := Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			probe, err := a.Probe()
+			if err == nil && probe.Status != StatusUnknown {
+				t.Fatalf("ambiguous saved-reader copies accepted: %#v", probe)
+			}
+		})
 	}
 }
 

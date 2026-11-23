@@ -217,3 +217,26 @@ func TestDuplicateNativeEffortQueriesAreRejected(t *testing.T) {
 		t.Fatal("multiple native effort query targets were accepted")
 	}
 }
+
+func TestComputedEffortProviderOverrideBinding(t *testing.T) {
+	query := strings.ReplaceAll(inlineCatalogModule, "custom=(0,cfg.cc)(config)", "override=selectedProvider,custom=(0,cfg.cc)(config,override)")
+	query = strings.ReplaceAll(query, `client.sendRequest("model/list")`, `client.sendRequest("model/list",{modelProvider:override})`)
+	for name, content := range map[string]string{
+		"bound override":         query,
+		"wrong request override": strings.Replace(query, "modelProvider:override", "modelProvider:other", 1),
+		"wrong query config":     strings.Replace(query, "cc)(config,override)", "cc)(other,override)", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			report, err := scanEffortRules(Entry{Path: "webview/assets/async/catalog.js"}, rspackChunk(content))
+			if name != "bound override" {
+				if err == nil {
+					t.Fatal("inconsistent provider override was accepted")
+				}
+				return
+			}
+			if err != nil || report.effortQueries != 1 || len(report.edits) != 1 {
+				t.Fatalf("computed provider override: %#v, %v", report, err)
+			}
+		})
+	}
+}

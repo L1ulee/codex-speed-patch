@@ -8,19 +8,28 @@
 
 ## 当前状态
 
-- 补丁器版本：`0.1.6`，补丁规则：`speed-mode-api-v8`
-- macOS 实测日期：`2026-11-12`
-- 最新验证 Codex Desktop：`26.1106.51428`（build `26605`）；此前已测试 `26.1103.60933`、`26.1027.51404`、`26.1021.31345`、`26.1013.40934`、`26.1007.30912`
+- 补丁器版本：`0.1.7`，补丁规则：`speed-mode-api-v9`
+- macOS 实测日期：`2026-11-23`
+- 最新验证 Codex Desktop：`26.1117.41037`（build `29803`）；此前已测试 `26.1111.71704`、`26.1111.21308`、`26.1106.51428`、`26.1103.60933`、`26.1027.51404`、`26.1021.31345`、`26.1013.40934`、`26.1007.30912`
 
-本版适配新版 Codex 的 Rspack 分块、匿名内联函数及跨模块身份读取，修复旧规则无法完整覆盖的 Speed 和 reasoning Ultra 路径。验证结果如下：
+本版适配新版保存档位函数的 provider 参数、混合 Rspack 模块包装和 Ultra 查询的 provider 覆盖值，修复 v8 在 `26.1117.41037` 上无法通过兼容检查的问题。验证结果如下：
 
-- 在 `26.1103.60933` 正式应用部署 v8 后，用户确认 Speed／闪电控件出现，且可切换 Fast／Ultrafast。
-- `26.1106.51428` 隔离副本通过补丁、签名及 Sparkle 更新签名链检查；32 个修改后的 JavaScript 资源通过语法检查，应用稳定运行 12 秒并正常退出。
+- `26.1117.41037` 隔离副本通过补丁、签名及 Sparkle 更新签名链检查；41 个修改后的 JavaScript 资源通过语法检查，应用稳定运行 12 秒并正常退出。
+- 运行时回归覆盖三处保存档位读取、provider 传递、Speed 权限、Ultra 显式关闭、偏好及模型能力过滤，并验证混合模块包装、异常绑定拒绝和重复修补。
 - 最新副本的内置 CLI 模型目录中，`gpt-6.1-sol`、`gpt-5.6-sol`、`gpt-6-astra` 均包含 `priority`（Fast）和 `ultrafast`。
 - 最新正式应用已完成完整备份、整包替换及重开，部署记录为 `deployed`；该版本的界面控件仍需单独确认。
+- 此前在 `26.1103.60933` 正式应用部署 v8 后，用户确认 Speed／闪电控件出现，且可切换 Fast／Ultrafast。
 - 全量 Go 测试和 `go vet`。
 
 Windows/Linux 发布产物仅完成交叉构建与格式检查。真实上游、自动派生子代理工具、Keychain、推送和实际官方更新安装仍待端到端验证。
+
+## 0.1.7 修复
+
+- 规则升级为 `speed-mode-api-v9`，兼容保存档位函数新增的第 5 个 provider 参数，同时核对第 4 个认证回调和模型请求的 provider 绑定。
+- 覆盖 app-server host、early bootstrap 和 webview 三处保存档位读取；保留旧版一至两处读取的兼容性，拒绝额外或不符合三处布局的目标。
+- 同时识别 Rspack 方法形式和 `id:(function(...){...})` 函数包装，正确处理混合布局中的模块归属及副本。
+- 适配 Ultra 查询的双参数 provider 判断，保留原生计算，并验证覆盖值与 `model/list` 请求一致；继续遵循默认 provider 开关、用户偏好及模型能力。
+- 增加对应运行时和异常结构回归，更新中英文说明及六平台构建与下载链接。
 
 ## 0.1.6 修复
 
@@ -94,6 +103,7 @@ Codex 模型目录已经可以声明速度档位：
 ## 安全机制
 
 - 请求权限按一个逻辑目标校验；存在原生 Ultra 查询时按其逻辑模块校验。同一 Rspack 模块分布在多个分块时处理全部副本，并覆盖控件与保存档位读取函数。
+- 三处保存档位读取须对应 app-server host、early bootstrap 和 webview；新增 provider 参数须与模型请求绑定一致。
 - 必需目标或身份依赖缺失、逻辑目标存在歧义、变量绑定不一致时终止修改。
 - 仅更新匹配规则所在资源的索引，其余原始数据保持完整。
 - 修改前验证文件哈希和全部分块哈希。
@@ -157,7 +167,7 @@ ad-hoc 签名不能保留 OpenAI Developer ID 和原始 TeamIdentifier，可能�
 
 ### 1. 选择二进制
 
-从 [v0.1.6 Release](https://github.com/L1ulee/codex-speed-patch/releases/tag/v0.1.6) 下载对应平台二进制与 `SHA256SUMS.txt`。源码构建产物位于 `dist/v0.1.6/`；校验值以同一 Release 中的清单为准。
+从 [v0.1.7 Release](https://github.com/L1ulee/codex-speed-patch/releases/tag/v0.1.7) 下载对应平台二进制与 `SHA256SUMS.txt`。源码构建产物位于 `dist/v0.1.7/`；校验值以同一 Release 中的清单为准。
 
 ```text
 codex-speed-patch-darwin-arm64
@@ -171,13 +181,13 @@ codex-speed-patch-windows-arm64.exe
 macOS 示例：
 
 ```bash
-chmod +x dist/v0.1.6/codex-speed-patch-darwin-arm64
+chmod +x dist/v0.1.7/codex-speed-patch-darwin-arm64
 ```
 
 ### 2. 检查状态
 
 ```bash
-dist/v0.1.6/codex-speed-patch-darwin-arm64 status \
+dist/v0.1.7/codex-speed-patch-darwin-arm64 status \
   --app "/Applications/ChatGPT.app"
 ```
 
@@ -335,15 +345,15 @@ go test ./...
 go vet ./...
 go build ./cmd/codex-speed-patch
 
-GOOS=darwin GOARCH=arm64 go build -o dist/v0.1.6/codex-speed-patch-darwin-arm64 ./cmd/codex-speed-patch
-GOOS=darwin GOARCH=amd64 go build -o dist/v0.1.6/codex-speed-patch-darwin-amd64 ./cmd/codex-speed-patch
-GOOS=linux GOARCH=amd64 go build -o dist/v0.1.6/codex-speed-patch-linux-amd64 ./cmd/codex-speed-patch
-GOOS=linux GOARCH=arm64 go build -o dist/v0.1.6/codex-speed-patch-linux-arm64 ./cmd/codex-speed-patch
-GOOS=windows GOARCH=amd64 go build -o dist/v0.1.6/codex-speed-patch-windows-amd64.exe ./cmd/codex-speed-patch
-GOOS=windows GOARCH=arm64 go build -o dist/v0.1.6/codex-speed-patch-windows-arm64.exe ./cmd/codex-speed-patch
+GOOS=darwin GOARCH=arm64 go build -o dist/v0.1.7/codex-speed-patch-darwin-arm64 ./cmd/codex-speed-patch
+GOOS=darwin GOARCH=amd64 go build -o dist/v0.1.7/codex-speed-patch-darwin-amd64 ./cmd/codex-speed-patch
+GOOS=linux GOARCH=amd64 go build -o dist/v0.1.7/codex-speed-patch-linux-amd64 ./cmd/codex-speed-patch
+GOOS=linux GOARCH=arm64 go build -o dist/v0.1.7/codex-speed-patch-linux-arm64 ./cmd/codex-speed-patch
+GOOS=windows GOARCH=amd64 go build -o dist/v0.1.7/codex-speed-patch-windows-amd64.exe ./cmd/codex-speed-patch
+GOOS=windows GOARCH=arm64 go build -o dist/v0.1.7/codex-speed-patch-windows-arm64.exe ./cmd/codex-speed-patch
 ```
 
-本地 `0.1.6` 产物的校验值位于 `dist/v0.1.6/SHA256SUMS.txt`。[CHECKSUMS.txt](CHECKSUMS.txt) 仅记录 `v0.1.0` 的历史二进制校验值。
+本地 `0.1.7` 产物的校验值位于 `dist/v0.1.7/SHA256SUMS.txt`。[CHECKSUMS.txt](CHECKSUMS.txt) 仅记录 `v0.1.0` 的历史二进制校验值。
 
 ## 状态文件
 

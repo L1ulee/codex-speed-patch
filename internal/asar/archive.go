@@ -180,6 +180,7 @@ func (a *Archive) ReadEntry(entry Entry) ([]byte, error) {
 
 func (a *Archive) Probe() (*ProbeResult, error) {
 	var report ruleReport
+	var hostReaders, bootstrapReaders, webviewReaders int
 	var paths []string
 	uiPath := ""
 	var models []string
@@ -233,6 +234,13 @@ func (a *Archive) Probe() (*ProbeResult, error) {
 		}
 		report.ui += r.ui
 		report.readers += r.readers
+		if entry.Path == ".vite/build/app-server-host.js" {
+			hostReaders += r.readers
+		} else if strings.HasPrefix(entry.Path, ".vite/build/early-bootstrap-") {
+			bootstrapReaders += r.readers
+		} else if strings.HasPrefix(entry.Path, "webview/assets/") {
+			webviewReaders += r.readers
+		}
 		if r.policyModule != "" {
 			policyModules[r.policyModule] = true
 		} else {
@@ -290,7 +298,11 @@ func (a *Archive) Probe() (*ProbeResult, error) {
 	}
 	result := &ProbeResult{Status: StatusUnknown, TargetPath: uiPath, TargetPaths: paths, Candidates: report.edits, UltrafastModels: sortedModels(models)}
 	tiersComplete := report.tierMenus == 0 && report.tierLookups == 0 || report.tierMenus == 1 && report.tierLookups == 1 || report.tierMenusRspack && report.tierLookups == 0
-	complete := report.ui >= 1 && report.policies == 1 && report.readers >= 1 && report.readers <= 2 && tiersComplete
+	// Newer packages include a saved reader in the separate app-server host as
+	// well as the bootstrap and webview. Extra unrelated readers stay ambiguous.
+	readersComplete := report.readers >= 1 && report.readers <= 2 ||
+		report.readers == 3 && hostReaders == 1 && bootstrapReaders == 1 && webviewReaders == 1
+	complete := report.ui >= 1 && report.policies == 1 && readersComplete && tiersComplete
 	if !complete {
 		if report.ui >= 1 && report.patched > 0 {
 			result.Status = StatusPartial

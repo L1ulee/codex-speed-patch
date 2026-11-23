@@ -8,19 +8,28 @@ The patcher reuses Codex's existing model catalog, `service_tiers`, `service_tie
 
 ## Current Status
 
-- Patcher version: `0.1.6`; patch rule: `speed-mode-api-v8`
-- macOS test date: `2026-11-12`
-- Latest Codex Desktop validation: `26.1106.51428` (build `26605`); previously tested: `26.1103.60933`, `26.1027.51404`, `26.1021.31345`, `26.1013.40934`, `26.1007.30912`
+- Patcher version: `0.1.7`; patch rule: `speed-mode-api-v9`
+- macOS test date: `2026-11-23`
+- Latest Codex Desktop validation: `26.1117.41037` (build `29803`); previously tested: `26.1111.71704`, `26.1111.21308`, `26.1106.51428`, `26.1103.60933`, `26.1027.51404`, `26.1021.31345`, `26.1013.40934`, `26.1007.30912`
 
-This release adapts the patch to newer Codex Rspack chunks, anonymous inline functions, and identity readers in separate modules. It repairs Speed and reasoning Ultra paths that earlier rules could not fully cover. Validation established:
+This release supports the provider parameter added to saved tier readers, mixed Rspack module wrappers, and provider overrides in the Ultra query. It fixes v8 compatibility checks failing on `26.1117.41037`. Validation established:
 
-- After v8 deployment to the installed `26.1103.60933` app, the user confirmed the Speed/lightning control appeared and could switch between Fast and Ultrafast.
-- An isolated `26.1106.51428` copy passed patch, signature, and Sparkle signer-chain checks. All 32 changed JavaScript assets passed syntax checks; the app remained stable for 12 seconds and exited normally.
+- An isolated `26.1117.41037` copy passed patch, signature, and Sparkle signer-chain checks. All 41 changed JavaScript assets passed syntax checks; the app remained stable for 12 seconds and exited normally.
+- Runtime regressions cover three saved tier readers, provider forwarding, Speed permissions, Ultra opt-outs, preferences, and model capabilities, plus mixed module wrappers, rejected inconsistent bindings, and idempotency.
 - The latest copy's embedded CLI catalog includes `priority` (Fast) and `ultrafast` for `gpt-6.1-sol`, `gpt-5.6-sol`, and `gpt-6-astra`.
 - The latest installed app completed a full backup, bundle replacement, and relaunch with deployment state `deployed`; its visible controls still require separate confirmation.
+- Previously, after v8 deployment to the installed `26.1103.60933` app, the user confirmed the Speed/lightning control appeared and could switch between Fast and Ultrafast.
 - The full Go test suite and `go vet`.
 
 Windows/Linux release binaries were cross-compiled and checked for format only. Real upstream requests, autonomous subagent tools, Keychain, push notifications, and actual official update installation still require end-to-end verification.
+
+## 0.1.7 Fixes
+
+- Upgrades the rule to `speed-mode-api-v9` for the fifth provider parameter in saved tier readers, checking both the fourth authentication callback and the model request's provider binding.
+- Covers saved tier readers in the app-server host, early bootstrap, and webview. Existing one- and two-reader layouts remain supported; extra targets and inconsistent three-reader layouts are rejected.
+- Recognizes both Rspack methods and `id:(function(...){...})` wrappers, resolving modules and their copies in mixed layouts.
+- Supports two-argument provider detection in the Ultra query, retaining the native calculation and checking that its override matches `model/list`. Default-provider gating, preferences, and model capabilities retain their behavior.
+- Adds runtime and rejection regressions and updates both READMEs, download links, and six-platform build examples.
 
 ## 0.1.6 Fixes
 
@@ -94,6 +103,7 @@ The patcher performs these steps:
 ## Safety Model
 
 - Request permissions resolve to one logical target; a native Ultra query, when present, is validated by its logical module. All copies of the same Rspack module across chunks are handled, along with UI and saved tier reader functions.
+- Three saved tier readers must belong to the app-server host, early bootstrap, and webview. New provider parameters must match the model request's binding.
 - Missing required targets or identity dependencies, ambiguous logical targets, and mismatched variable bindings stop the patch.
 - Only changed asset index nodes are redirected; the original payload remains intact.
 - The original file hash and every block hash are verified before modification.
@@ -157,7 +167,7 @@ These capabilities may be affected. A full official application backup restores 
 
 ### 1. Select a Binary
 
-Download your platform binary and `SHA256SUMS.txt` from the [v0.1.6 Release](https://github.com/L1ulee/codex-speed-patch/releases/tag/v0.1.6). Local source builds are in `dist/v0.1.6/`; verify against the checksum manifest from the same Release.
+Download your platform binary and `SHA256SUMS.txt` from the [v0.1.7 Release](https://github.com/L1ulee/codex-speed-patch/releases/tag/v0.1.7). Local source builds are in `dist/v0.1.7/`; verify against the checksum manifest from the same Release.
 
 ```text
 codex-speed-patch-darwin-arm64
@@ -171,13 +181,13 @@ codex-speed-patch-windows-arm64.exe
 macOS example:
 
 ```bash
-chmod +x dist/v0.1.6/codex-speed-patch-darwin-arm64
+chmod +x dist/v0.1.7/codex-speed-patch-darwin-arm64
 ```
 
 ### 2. Inspect the State
 
 ```bash
-dist/v0.1.6/codex-speed-patch-darwin-arm64 status \
+dist/v0.1.7/codex-speed-patch-darwin-arm64 status \
   --app "/Applications/ChatGPT.app"
 ```
 
@@ -335,15 +345,15 @@ go test ./...
 go vet ./...
 go build ./cmd/codex-speed-patch
 
-GOOS=darwin GOARCH=arm64 go build -o dist/v0.1.6/codex-speed-patch-darwin-arm64 ./cmd/codex-speed-patch
-GOOS=darwin GOARCH=amd64 go build -o dist/v0.1.6/codex-speed-patch-darwin-amd64 ./cmd/codex-speed-patch
-GOOS=linux GOARCH=amd64 go build -o dist/v0.1.6/codex-speed-patch-linux-amd64 ./cmd/codex-speed-patch
-GOOS=linux GOARCH=arm64 go build -o dist/v0.1.6/codex-speed-patch-linux-arm64 ./cmd/codex-speed-patch
-GOOS=windows GOARCH=amd64 go build -o dist/v0.1.6/codex-speed-patch-windows-amd64.exe ./cmd/codex-speed-patch
-GOOS=windows GOARCH=arm64 go build -o dist/v0.1.6/codex-speed-patch-windows-arm64.exe ./cmd/codex-speed-patch
+GOOS=darwin GOARCH=arm64 go build -o dist/v0.1.7/codex-speed-patch-darwin-arm64 ./cmd/codex-speed-patch
+GOOS=darwin GOARCH=amd64 go build -o dist/v0.1.7/codex-speed-patch-darwin-amd64 ./cmd/codex-speed-patch
+GOOS=linux GOARCH=amd64 go build -o dist/v0.1.7/codex-speed-patch-linux-amd64 ./cmd/codex-speed-patch
+GOOS=linux GOARCH=arm64 go build -o dist/v0.1.7/codex-speed-patch-linux-arm64 ./cmd/codex-speed-patch
+GOOS=windows GOARCH=amd64 go build -o dist/v0.1.7/codex-speed-patch-windows-amd64.exe ./cmd/codex-speed-patch
+GOOS=windows GOARCH=arm64 go build -o dist/v0.1.7/codex-speed-patch-windows-arm64.exe ./cmd/codex-speed-patch
 ```
 
-Local `0.1.6` checksums are in `dist/v0.1.6/SHA256SUMS.txt`. [CHECKSUMS.txt](CHECKSUMS.txt) records only historical `v0.1.0` binary checksums.
+Local `0.1.7` checksums are in `dist/v0.1.7/SHA256SUMS.txt`. [CHECKSUMS.txt](CHECKSUMS.txt) records only historical `v0.1.0` binary checksums.
 
 ## State Files
 

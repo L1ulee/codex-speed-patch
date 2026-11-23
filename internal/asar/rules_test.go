@@ -154,3 +154,41 @@ func TestRspackModuleScopedRequestPolicyAllowsDuplicateHelperNames(t *testing.T)
 		t.Fatal("Rspack request policy did not produce an API-access repair")
 	}
 }
+
+func TestSavedTierProviderParameterKeepsCallbackBinding(t *testing.T) {
+	reader := `async function(e,t,n,r,p){try{if(!await r())return null;let requirements=await e.sendRequest("configRequirements/read"),{config:c}=await e.sendRequest("config/read");if(c.service_tier!=null)return c.service_tier;return e.sendRequest("model/list",{modelProvider:p})}catch(e){return t.error("Failed to read saved service tier for request"),null}}`
+	for name, content := range map[string]string{
+		"provider parameter": reader,
+		"wrong callback":     strings.Replace(reader, "!await r()", "!await p()", 1),
+		"wrong provider":     strings.Replace(reader, "modelProvider:p", "modelProvider:other", 1),
+		"extra parameter":    strings.Replace(reader, "n,r,p)", "n,r,p,q)", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			report, err := scanRules(Entry{Path: ".vite/build/app-server-host.js"}, []byte(content))
+			if name != "provider parameter" {
+				if err == nil {
+					t.Fatal("inconsistent saved-reader parameters were accepted")
+				}
+				return
+			}
+			if err != nil || report.readers != 1 || len(report.edits) != 1 {
+				t.Fatalf("provider-aware saved reader: %#v, %v", report, err)
+			}
+		})
+	}
+}
+
+func TestRspackScopesHandleMixedModuleWrappers(t *testing.T) {
+	data := []byte(`export const __webpack_modules__={first:(function(e,t,n){let value="first"}),second(a,b,c){let value="second"},third:(function(x,y,z){let value="third"})};`)
+	for _, want := range []struct{ id, exports, require string }{
+		{"first", "t", "n"}, {"second", "b", "c"}, {"third", "y", "z"},
+	} {
+		t.Run(want.id, func(t *testing.T) {
+			position := strings.Index(string(data), `value="`+want.id+`"`)
+			module := rspackScopeAt(data, position)
+			if module.id != want.id || module.exports != want.exports || module.require != want.require {
+				t.Fatalf("module owning %s: %#v", want.id, module)
+			}
+		})
+	}
+}

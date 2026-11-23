@@ -11,7 +11,7 @@ const identifier = `[A-Za-z_$][A-Za-z0-9_$]*`
 
 var (
 	savedGuard            = regexp.MustCompile(`\{try\{if\((!await (` + identifier + `)\(\)|!1)`)
-	savedDefinition       = regexp.MustCompile(`^async function(?: ` + identifier + `)?\(` + identifier + `,` + identifier + `,` + identifier + `,(` + identifier + `)\)`)
+	savedDefinition       = regexp.MustCompile(`^async function(?: ` + identifier + `)?\(` + identifier + `,` + identifier + `,` + identifier + `,(` + identifier + `)(?:,(` + identifier + `))?\)`)
 	authDenied            = regexp.MustCompile(`(` + identifier + ")!==`chatgpt`&&(" + identifier + ")!==`personalAccessToken`")
 	authDeniedPatched     = regexp.MustCompile(`!/\^\(chatgpt\|personalAccessToken\|apikey\)\$/\.test\((` + identifier + `)\)`)
 	authDeniedJSON        = regexp.MustCompile(`"chatgpt"!==(` + identifier + `)&&"personalAccessToken"!==(` + identifier + `)&&"amazonBedrock"!==(` + identifier + `)`)
@@ -19,7 +19,7 @@ var (
 	accessAuth            = regexp.MustCompile(`(` + identifier + ")\\?\\.authMethod===`chatgpt`\\|\\|(" + identifier + ")\\?\\.authMethod===`personalAccessToken`")
 	accessAuthPatched     = regexp.MustCompile(`/\^\(chatgpt\|personalAccessToken\|apikey\)\$/\.test\((` + identifier + `)\?\.authMethod\)`)
 	awaitCall             = regexp.MustCompile(`await (` + identifier + `)\(`)
-	rspackModule          = regexp.MustCompile(`(?:__webpack_modules__=\{|\},)(` + identifier + `)\((` + identifier + `),(` + identifier + `),(` + identifier + `)\)\{`)
+	rspackModule          = regexp.MustCompile(`(?:__webpack_modules__=\{|\}\)?,)(` + identifier + `)(?:\(|:\(function\()(` + identifier + `),(` + identifier + `),(` + identifier + `)\)\{`)
 	functionHeader        = regexp.MustCompile(`(?:async )?function(?: ` + identifier + `)?\(([^{}()]*)\)\{`)
 	importedAuthCall      = regexp.MustCompile(`let (` + identifier + `)=await\s*\(0,(` + identifier + `)\.(` + identifier + `)\)\(`)
 )
@@ -279,6 +279,12 @@ func scanRules(entry Entry, data []byte) (ruleReport, error) {
 		definition := savedDefinition.FindSubmatch(region)
 		if definition == nil || m[4] >= 0 && !bytes.Equal(definition[1], region[m[4]:m[5]]) {
 			return r, fmt.Errorf("saved-tier authentication callback differs in %s", entry.Path)
+		}
+		if len(definition[2]) > 0 {
+			provider := regexp.MustCompile(`modelProvider:` + regexp.QuoteMeta(string(definition[2])) + `(?:,|\})`)
+			if !provider.Match(region) {
+				return r, fmt.Errorf("saved-tier provider parameter differs in %s", entry.Path)
+			}
 		}
 		r.readers++
 		if string(region[m[2]:m[3]]) == "!1" {
