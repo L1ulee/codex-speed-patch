@@ -27,6 +27,7 @@ type Manifest struct {
 	PatchedAsarSHA256  string    `json:"patched_asar_sha256,omitempty"`
 	OriginalCLISHA256  string    `json:"original_cli_sha256,omitempty"`
 	PatchedCLISHA256   string    `json:"patched_cli_sha256,omitempty"`
+	CatalogSHA256      string    `json:"external_catalog_sha256,omitempty"`
 	BackupDir          string    `json:"backup_dir,omitempty"`
 	Status             string    `json:"status"`
 	LastCheckedAt      time.Time `json:"last_checked_at"`

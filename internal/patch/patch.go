@@ -19,7 +19,7 @@ import (
 	"codex-speed-patch/internal/state"
 )
 
-const RuleVersion = "speed-mode-api-v9"
+const RuleVersion = "speed-mode-api-v10"
 const CreatedDate = "2026-09-06"
 
 type Service struct {
@@ -27,6 +27,7 @@ type Service struct {
 	AppPath              string
 	AllowMacOSTest       bool
 	AllowMacOSProduction bool
+	OriginalAppPath      string
 }
 
 type Result struct {
@@ -58,8 +59,16 @@ func (s Service) Status() (*Result, error) {
 		if plan != nil {
 			status = asar.StatusPartial
 		}
+		if inst.PackageKind == "macos-app" && (!probe.CatalogLoader || !probe.SignedWorker || platform.VerifyOfficialCLI(inst) != nil || platform.VerifyOfficialWorker(inst) != nil) {
+			status = asar.StatusPartial
+		}
 		if err := verifyRecordedCLI(inst, manifest); err != nil {
 			return nil, err
+		}
+		if status == asar.StatusPatched {
+			if err := verifyRecordedCatalog(inst, manifest); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return &Result{Status: status, Manifest: manifest}, nil
@@ -107,6 +116,9 @@ func (s Service) Repair(sessionID string, markRestart bool) (*Result, error) {
 		if status == asar.StatusPatched && catalogPlan != nil {
 			status = asar.StatusPartial
 		}
+		if inst.PackageKind == "macos-app" && status == asar.StatusPatched && (!probe.CatalogLoader || !probe.SignedWorker || platform.VerifyOfficialCLI(inst) != nil || platform.VerifyOfficialWorker(inst) != nil) {
+			status = asar.StatusPartial
+		}
 	}
 	now := time.Now().UTC()
 	manifestPath := state.ManifestPath(s.CodexHome)
@@ -127,6 +139,32 @@ func (s Service) Repair(sessionID string, markRestart bool) (*Result, error) {
 	manifest.LastCheckedAt = now
 	if sessionID != "" {
 		manifest.ResumeSessionID = sessionID
+	}
+	var originalCLI *platform.Installation
+	if inst.PackageKind == "macos-app" && (platform.VerifyOfficialCLI(inst) != nil || platform.VerifyOfficialWorker(inst) != nil) {
+		source := s.OriginalAppPath
+		if source == "" && sameInstallation && originalBackup != "" {
+			source = filepath.Join(originalBackup, "ChatGPT.app")
+		}
+		if source == "" {
+			return nil, errors.New("same-version official backup is required to restore the CLI signing identity")
+		}
+		originalCLI, err = platform.Detect(source)
+		if err != nil {
+			return nil, err
+		}
+		if originalCLI.Version != inst.Version {
+			return nil, errors.New("official CLI backup version differs from the application")
+		}
+		if err := platform.Verify(originalCLI); err != nil {
+			return nil, fmt.Errorf("verify official CLI backup: %w", err)
+		}
+		if err := platform.VerifyOfficialCLI(originalCLI); err != nil {
+			return nil, err
+		}
+		if err := platform.VerifyOfficialWorker(originalCLI); err != nil {
+			return nil, err
+		}
 	}
 
 	switch status {
@@ -155,6 +193,12 @@ func (s Service) Repair(sessionID string, markRestart bool) (*Result, error) {
 			}
 		}
 		manifest.PatchRuleVersion = RuleVersion
+		if inst.PackageKind == "macos-app" {
+			manifest.CatalogSHA256, err = asar.FileSHA256(platform.ModelCatalogPath(inst))
+			if err != nil {
+				return nil, err
+			}
+		}
 		manifest.LastError = ""
 		if err := state.Save(manifestPath, manifest); err != nil {
 			return nil, err
@@ -198,13 +242,23 @@ func (s Service) Repair(sessionID string, markRestart bool) (*Result, error) {
 		}
 		return cause
 	}
+	if originalCLI != nil {
+		if err := restoreOfficialCLI(inst, originalCLI); err != nil {
+			return nil, rollback(err)
+		}
+		// Plan from the restored signed binary, not its former patched catalog.
+		catalogPlan, err = platform.ModelCatalogPatch(inst, probe.UltrafastModels)
+		if err != nil {
+			return nil, rollback(err)
+		}
+	}
 	var patchResult *asar.PatchResult
 	if len(probe.Candidates) > 0 {
 		tempPath := inst.AsarPath + ".speedpatch.tmp"
 		_ = os.Remove(tempPath)
 		patchResult, err = asar.PatchCopy(inst.AsarPath, tempPath)
 		if err != nil {
-			return nil, err
+			return nil, rollback(err)
 		}
 		if err := replaceFile(tempPath, inst.AsarPath); err != nil {
 			return nil, rollback(err)
@@ -216,7 +270,7 @@ func (s Service) Repair(sessionID string, markRestart bool) (*Result, error) {
 	if err := platform.ApplyModelCatalog(inst, catalogPlan); err != nil {
 		return nil, rollback(err)
 	}
-	if err := platform.Finalize(inst, patchResult.PatchedHeaderHash, catalogPlan != nil); err != nil {
+	if err := platform.Finalize(inst, patchResult.PatchedHeaderHash, catalogPlan != nil && !catalogPlan.External); err != nil {
 		return nil, rollback(err)
 	}
 	verifiedArchive, err := asar.Open(inst.AsarPath)
@@ -229,6 +283,21 @@ func (s Service) Repair(sessionID string, markRestart bool) (*Result, error) {
 			err = fmt.Errorf("post-finalize probe returned %s", verifiedProbe.Status)
 		}
 		return nil, rollback(err)
+	}
+	if inst.PackageKind == "macos-app" {
+		if !verifiedProbe.CatalogLoader || !verifiedProbe.SignedWorker {
+			return nil, rollback(errors.New("app-server external catalog loader is missing; this application layout is not supported"))
+		}
+		if err := platform.VerifyOfficialCLI(inst); err != nil {
+			return nil, rollback(err)
+		}
+		if err := platform.VerifyOfficialWorker(inst); err != nil {
+			return nil, rollback(err)
+		}
+		manifest.CatalogSHA256, err = asar.FileSHA256(platform.ModelCatalogPath(inst))
+		if err != nil {
+			return nil, rollback(err)
+		}
 	}
 	if remaining, err := platform.ModelCatalogPatch(inst, verifiedProbe.UltrafastModels); err != nil || remaining != nil {
 		if err == nil {
@@ -285,6 +354,66 @@ func verifyRecordedCLI(inst *platform.Installation, manifest *state.Manifest) er
 		return errors.New("native CLI hash differs from the recorded patched version")
 	}
 	return nil
+}
+
+func verifyRecordedCatalog(inst *platform.Installation, manifest *state.Manifest) error {
+	if manifest == nil || manifest.AppPath != inst.AppPath || manifest.AppVersion != inst.Version || manifest.CatalogSHA256 == "" {
+		return nil
+	}
+	hash, err := asar.FileSHA256(platform.ModelCatalogPath(inst))
+	if err != nil {
+		return err
+	}
+	if hash != manifest.CatalogSHA256 {
+		return errors.New("external model catalog differs from the recorded version")
+	}
+	return nil
+}
+
+func restoreOfficialCLI(inst, original *platform.Installation) error {
+	if err := platform.VerifyOfficialCLI(original); err != nil {
+		return err
+	}
+	cliBundle := filepath.Join(inst.AppPath, "Contents", "Resources", "codex-cli", "CodexCLI.app")
+	originalBundle := filepath.Join(original.AppPath, "Contents", "Resources", "codex-cli", "CodexCLI.app")
+	if _, err := os.Stat(cliBundle); errors.Is(err, os.ErrNotExist) {
+		return copyFile(original.CLIPath, inst.CLIPath)
+	} else if err != nil {
+		return err
+	}
+	work, err := os.MkdirTemp(filepath.Dir(cliBundle), ".official-cli-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(work)
+	copyPath := filepath.Join(work, "CodexCLI.app")
+	if output, err := exec.Command("/bin/cp", "-cR", originalBundle, copyPath).CombinedOutput(); err != nil {
+		return fmt.Errorf("clone official CLI: %s", strings.TrimSpace(string(output)))
+	}
+	previous := filepath.Join(work, "previous.app")
+	if err := os.Rename(cliBundle, previous); err != nil {
+		return err
+	}
+	if err := os.Rename(copyPath, cliBundle); err != nil {
+		_ = os.Rename(previous, cliBundle)
+		return err
+	}
+	if err := platform.VerifyOfficialCLI(inst); err != nil {
+		return err
+	}
+	worker := platform.OfficialWorkerPath(inst)
+	workerCopy := filepath.Join(work, "official-service.app")
+	if output, err := exec.Command("/bin/cp", "-cR", platform.OfficialWorkerPath(original), workerCopy).CombinedOutput(); err != nil {
+		return fmt.Errorf("clone official service helper: %s", strings.TrimSpace(string(output)))
+	}
+	if err := os.Rename(worker, filepath.Join(work, "previous-service.app")); err != nil {
+		return err
+	}
+	if err := os.Rename(workerCopy, worker); err != nil {
+		_ = os.Rename(filepath.Join(work, "previous-service.app"), worker)
+		return err
+	}
+	return platform.VerifyOfficialWorker(inst)
 }
 
 func (s Service) Restore() error {

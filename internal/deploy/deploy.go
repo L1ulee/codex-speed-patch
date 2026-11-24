@@ -184,7 +184,14 @@ func (s Service) Prepare(sessionID string) (result *Result, err error) {
 		return nil, err
 	}
 	// The existing patcher enforces its signing preflight on this temporary copy.
-	patched, err := (patch.Service{CodexHome: filepath.Join(work, "patch-home"), AppPath: copyPath, AllowMacOSTest: true}).Repair(sessionID, false)
+	originalApp := ""
+	if current.Manifest != nil && current.Manifest.AppPath == inst.AppPath && current.Manifest.AppVersion == inst.Version && current.Manifest.BackupDir != "" {
+		originalApp = filepath.Join(current.Manifest.BackupDir, "ChatGPT.app")
+		if err := verifyBundle(originalApp, inst.Version, current.Manifest.OriginalAsarSHA256, false); err != nil {
+			return nil, fmt.Errorf("verify migration backup: %w", err)
+		}
+	}
+	patched, err := (patch.Service{CodexHome: filepath.Join(work, "patch-home"), AppPath: copyPath, AllowMacOSTest: true, OriginalAppPath: originalApp}).Repair(sessionID, false)
 	if err != nil {
 		return nil, err
 	}
@@ -348,6 +355,15 @@ func verifyBundle(path, version, hash string, patched bool) error {
 		if probe.Status != asar.StatusPatched {
 			return fmt.Errorf("replacement bundle reports %s", probe.Status)
 		}
+		if !probe.CatalogLoader || !probe.SignedWorker {
+			return errors.New("replacement is missing the app-server external catalog loader")
+		}
+		if err := platform.VerifyOfficialCLI(inst); err != nil {
+			return err
+		}
+		if err := platform.VerifyOfficialWorker(inst); err != nil {
+			return err
+		}
 		if plan, err := platform.ModelCatalogPatch(inst, probe.UltrafastModels); err != nil || plan != nil {
 			if err != nil {
 				return err
@@ -471,6 +487,9 @@ func (s Service) activate(record *Record) (err error) {
 	if err := verifyCLIHash(record.StagePath, record.Manifest.PatchedCLISHA256); err != nil {
 		return err
 	}
+	if err := verifyCatalogHash(record.StagePath, record.Manifest.CatalogSHA256); err != nil {
+		return err
+	}
 	if err := verifyCLIHash(record.AppPath, record.SourceCLIHash); err != nil {
 		return err
 	}
@@ -561,6 +580,9 @@ func (s Service) activate(record *Record) (err error) {
 	if err := verifyCLIHash(record.AppPath, record.Manifest.PatchedCLISHA256); err != nil {
 		return err
 	}
+	if err := verifyCatalogHash(record.AppPath, record.Manifest.CatalogSHA256); err != nil {
+		return err
+	}
 	manifest := record.Manifest
 	manifest.LastCheckedAt = time.Now().UTC()
 	manifest.RestartRequired = false
@@ -597,6 +619,21 @@ func verifyCLIHash(appPath, expected string) error {
 	}
 	if hash != expected {
 		return errors.New("native CLI changed after deployment preparation")
+	}
+	return nil
+}
+
+func verifyCatalogHash(appPath, expected string) error {
+	if expected == "" {
+		return nil
+	}
+	path := filepath.Join(appPath, "Contents", "Resources", asar.CatalogFileName)
+	actual, err := asar.FileSHA256(path)
+	if err != nil {
+		return err
+	}
+	if actual != expected {
+		return errors.New("external model catalog changed after deployment preparation")
 	}
 	return nil
 }

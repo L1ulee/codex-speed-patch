@@ -72,6 +72,12 @@ func macSignSteps(inst *Installation, entitlementsPath string, nativeCLIChanged 
 		if !isWithinApp(inst.AppPath, helper) {
 			return nil, fmt.Errorf("Codex helper resolves outside app bundle: %s", helper)
 		}
+		if filepath.Base(helper) == "Codex (Service).app" {
+			if err := VerifyOfficialWorker(inst); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		steps = append(steps, []string{"--force", "--sign", "-", "--preserve-metadata=identifier,flags,runtime", helper})
 	}
 	steps = append(steps, []string{"--force", "--sign", "-", "--preserve-metadata=identifier,flags,runtime", framework})
@@ -221,6 +227,40 @@ func VerifyUpdateSigning(inst *Installation) error {
 		if signer != host {
 			return fmt.Errorf("Sparkle signing identity differs from host: %s", target)
 		}
+	}
+	return nil
+}
+
+// Computer Use authenticates the app-server client by its OpenAI identity.
+// The surrounding Electron bundle may be ad-hoc signed; this CLI may not.
+func VerifyOfficialCLI(inst *Installation) error {
+	if inst.PackageKind != "macos-app" {
+		return nil
+	}
+	if !isWithinApp(inst.AppPath, inst.CLIPath) {
+		return fmt.Errorf("official CLI resolves outside the application")
+	}
+	requirement := `anchor apple generic and certificate leaf[subject.OU] = "2DC432GLL2"`
+	output, err := exec.Command("/usr/bin/codesign", "--verify", "--strict", "-R="+requirement, inst.CLIPath).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("Computer Use requires the official OpenAI CLI; restore it from the same-version backup: %s", strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func OfficialWorkerPath(inst *Installation) string {
+	return filepath.Join(inst.AppPath, "Contents", "Frameworks", "Codex Framework.framework", "Helpers", "Codex (Service).app")
+}
+
+func VerifyOfficialWorker(inst *Installation) error {
+	path := OfficialWorkerPath(inst)
+	if !isWithinApp(inst.AppPath, path) {
+		return fmt.Errorf("official app-server service helper is missing or outside the application")
+	}
+	requirement := `anchor apple generic and identifier "com.openai.codex.helper" and certificate leaf[subject.OU] = "2DC432GLL2"`
+	output, err := exec.Command("/usr/bin/codesign", "--verify", "--strict", "-R="+requirement, path).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("app-server requires its official service helper: %s", strings.TrimSpace(string(output)))
 	}
 	return nil
 }

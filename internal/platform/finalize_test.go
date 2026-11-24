@@ -170,3 +170,21 @@ func TestNativeCLIBundleIsSignedBeforeOuterApp(t *testing.T) {
 		t.Fatalf("native CLI must be signed before its enclosing app: %v", steps)
 	}
 }
+
+func TestExternalCatalogDoesNotScheduleCLISigning(t *testing.T) {
+	app := filepath.Join(t.TempDir(), "Test.app")
+	for _, path := range []string{"Contents/Frameworks/Codex Framework.framework/Helpers/Codex (Renderer).app", "Contents/Resources/codex-cli/CodexCLI.app"} {
+		if err := os.MkdirAll(filepath.Join(app, path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	steps, err := macSignSteps(&Installation{AppPath: app}, "/tmp/entitlements.plist", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range steps {
+		if strings.Contains(step[len(step)-1], "CodexCLI.app") {
+			t.Fatal("external catalog triggered CLI re-signing")
+		}
+	}
+}

@@ -3,6 +3,8 @@ package platform
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -42,6 +44,55 @@ func TestNativeCatalogPatchPreservesOffsetsAndUnrelatedMetadata(t *testing.T) {
 	}
 	if again, err := PlanModelCatalog(patched, []string{"supported"}); err != nil || again != nil {
 		t.Fatalf("catalog patch is not idempotent: %#v, %v", again, err)
+	}
+}
+
+func TestMacCatalogIsExternalAndLeavesCLIUnchanged(t *testing.T) {
+	app := filepath.Join(t.TempDir(), "Test.app")
+	cli := filepath.Join(app, "Contents", "Resources", "codex")
+	if err := os.MkdirAll(filepath.Dir(cli), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	models := map[string]any{"models": []any{map[string]any{
+		"slug": "supported", "service_tiers": []any{map[string]any{"id": "priority"}}, "instructions": "preserved",
+	}}}
+	data, _ := json.MarshalIndent(models, "", "        ")
+	data = bytes.Replace(data, []byte("{\n        \"models\""), []byte("{\n  \"models\""), 1)
+	if err := os.WriteFile(cli, data, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	inst := &Installation{AppPath: app, CLIPath: cli, PackageKind: "macos-app"}
+	plan, err := ModelCatalogPatch(inst, []string{"supported"})
+	if err != nil || plan == nil || !plan.External {
+		t.Fatalf("external catalog: %#v, %v", plan, err)
+	}
+	if err := ApplyModelCatalog(inst, plan); err != nil {
+		t.Fatal(err)
+	}
+	actual, _ := os.ReadFile(cli)
+	if !bytes.Equal(actual, data) {
+		t.Fatal("official CLI bytes changed")
+	}
+	external, _ := os.ReadFile(ModelCatalogPath(inst))
+	if !bytes.Contains(external, []byte(`"id":"ultrafast"`)) || !bytes.Contains(external, []byte(`"instructions":"preserved"`)) {
+		t.Fatal("external catalog lost model metadata or Ultrafast")
+	}
+	if again, err := ModelCatalogPatch(inst, []string{"supported"}); err != nil || again != nil {
+		t.Fatalf("external catalog is not idempotent: %#v, %v", again, err)
+	}
+	if err := os.WriteFile(ModelCatalogPath(inst), []byte("changed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyModelCatalog(inst, plan); err == nil {
+		t.Fatal("external catalog changed after planning was overwritten")
+	}
+}
+
+func TestExternalCatalogDoesNotRequireExecutablePadding(t *testing.T) {
+	data := []byte(`{"models":[{"slug":"supported","service_tiers":[]}]}`)
+	external, err := externalModelCatalog(data, []string{"supported"})
+	if err != nil || !bytes.Contains(external, []byte(`"id":"ultrafast"`)) {
+		t.Fatalf("external catalog should not require binary padding: %s, %v", external, err)
 	}
 }
 

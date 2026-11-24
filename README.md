@@ -8,20 +8,28 @@
 
 ## 当前状态
 
-- 补丁器版本：`0.1.7`，补丁规则：`speed-mode-api-v9`
-- macOS 实测日期：`2026-11-23`
+- 补丁器版本：`0.1.8`，补丁规则：`speed-mode-api-v10`
+- macOS 实测日期：`2026-11-24`
 - 最新验证 Codex Desktop：`26.1117.41037`（build `29803`）；此前已测试 `26.1111.71704`、`26.1111.21308`、`26.1106.51428`、`26.1103.60933`、`26.1027.51404`、`26.1021.31345`、`26.1013.40934`、`26.1007.30912`
 
-本版适配新版保存档位函数的 provider 参数、混合 Rspack 模块包装和 Ultra 查询的 provider 覆盖值，修复 v8 在 `26.1117.41037` 上无法通过兼容检查的问题。验证结果如下：
+本版修复 macOS 补丁重签导致的 Computer Use 与内置浏览器连接失败，同时保留原生速度档位和推理强度控件。验证结果如下：
 
-- `26.1117.41037` 隔离副本通过补丁、签名及 Sparkle 更新签名链检查；41 个修改后的 JavaScript 资源通过语法检查，应用稳定运行 12 秒并正常退出。
-- 运行时回归覆盖三处保存档位读取、provider 传递、Speed 权限、Ultra 显式关闭、偏好及模型能力过滤，并验证混合模块包装、异常绑定拒绝和重复修补。
-- 最新副本的内置 CLI 模型目录中，`gpt-6.1-sol`、`gpt-5.6-sol`、`gpt-6-astra` 均包含 `priority`（Fast）和 `ultrafast`。
-- 最新正式应用已完成完整备份、整包替换及重开，部署记录为 `deployed`；该版本的界面控件仍需单独确认。
-- 此前在 `26.1103.60933` 正式应用部署 v8 后，用户确认 Speed／闪电控件出现，且可切换 Fast／Ultrafast。
-- 全量 Go 测试和 `go vet`。
+- 正式应用已完成 v9→v10 迁移、整包替换与重开，部署状态为 `deployed`；内置 CLI 和 Service helper 均保留 OpenAI 官方签名。
+- 正式应用的桌面 Computer Use 成功点击计算器并读回 `2+3=5`；内置浏览器成功打开并读取测试页面。
+- 最终隔离副本的 40 个相关 JavaScript 资源通过语法检查；签名、更新签名链、启动与重复修补检查通过，用户确认 Speed／Fast／Ultrafast 和支持的 Ultra 控件显示且可切换。
+- 外部模型目录为 `gpt-6.1-sol`、`gpt-5.6-sol`、`gpt-6-astra` 保留 `priority`（Fast）和 `ultrafast`；本地模拟上游捕获这两个请求值。
+- 全量 Go 测试和 `go vet` 通过。回归覆盖目录及启动参数、官方 CLI 保留、迁移校验、异常数据拒绝、重复修补和失败回滚。
 
-Windows/Linux 发布产物仅完成交叉构建与格式检查。真实上游、自动派生子代理工具、Keychain、推送和实际官方更新安装仍待端到端验证。
+macOS Intel、Windows/Linux 发布产物仅完成交叉构建与格式检查。真实上游、自动派生子代理工具、Keychain、推送和实际官方更新安装仍待端到端验证。
+
+## 0.1.8 修复
+
+- 规则升级为 `speed-mode-api-v10`，保留内置 CLI 和 `Codex (Service)` 辅助程序的 OpenAI 官方签名，恢复 Computer Use 所需的身份链。
+- 将补齐后的目录保存到 `Contents/Resources/codex-speed-models.json`，通过原生 `model_catalog_json` 启动参数加载；macOS 不再改写或重签 CLI 二进制。
+- app-server host 通过原生 `browser-subprocess-path` 选择官方 Service helper，使内置浏览器连接恢复；原生连接身份校验保持启用。
+- 既有 v9 安装从 manifest 记录的同版本完整官方备份恢复 CLI 和辅助程序；备份缺失、版本不同或签名验证失败时停止迁移。
+- 外部目录纳入应用资源签名和部署校验，保留原始官方备份；部署失败时恢复原应用及 manifest，重复修补返回无改动。
+- Windows/Linux 沿用内置目录修补流程。用户配置、认证和 Hook 不被改写。
 
 ## 0.1.7 修复
 
@@ -98,7 +106,7 @@ Codex 模型目录已经可以声明速度档位：
 4. 重算每个变更资源的 SHA-256 和 ASAR 分块哈希。
 5. 更新 Header JSON 的偏移、大小和完整性记录，保留链接、unpacked 与未知元数据。
 6. macOS 上将 Header JSON SHA-256 写入 `ElectronAsarIntegrity`，并同步 Framework 的 `__asar_integrity` 摘要。
-7. 根据已验证的模型能力同步修补内置 CLI 目录；必要时重签嵌套 CLI，再与 Electron、Sparkle 和外层应用一起验证签名及更新链身份。
+7. 根据已验证的模型能力生成目录；macOS 通过外部 JSON 保留官方 CLI 签名，其他平台沿用内置目录修补，再验证 Electron、Sparkle 和外层应用的签名及更新链身份。
 
 ## 安全机制
 
@@ -167,7 +175,7 @@ ad-hoc 签名不能保留 OpenAI Developer ID 和原始 TeamIdentifier，可能�
 
 ### 1. 选择二进制
 
-从 [v0.1.7 Release](https://github.com/L1ulee/codex-speed-patch/releases/tag/v0.1.7) 下载对应平台二进制与 `SHA256SUMS.txt`。源码构建产物位于 `dist/v0.1.7/`；校验值以同一 Release 中的清单为准。
+从 [v0.1.8 Release](https://github.com/L1ulee/codex-speed-patch/releases/tag/v0.1.8) 下载对应平台二进制与 `SHA256SUMS.txt`。源码构建产物位于 `dist/v0.1.8/`；校验值以同一 Release 中的清单为准。
 
 ```text
 codex-speed-patch-darwin-arm64
@@ -181,13 +189,13 @@ codex-speed-patch-windows-arm64.exe
 macOS 示例：
 
 ```bash
-chmod +x dist/v0.1.7/codex-speed-patch-darwin-arm64
+chmod +x dist/v0.1.8/codex-speed-patch-darwin-arm64
 ```
 
 ### 2. 检查状态
 
 ```bash
-dist/v0.1.7/codex-speed-patch-darwin-arm64 status \
+dist/v0.1.8/codex-speed-patch-darwin-arm64 status \
   --app "/Applications/ChatGPT.app"
 ```
 
@@ -195,7 +203,7 @@ dist/v0.1.7/codex-speed-patch-darwin-arm64 status \
 
 - `original`：尚未应用补丁。
 - `patched`：补丁已生效。
-- `partial`：控件、请求路径或内置 CLI 目录仍需修复。
+- `partial`：控件、请求路径、模型目录或运行组件签名仍需修复。
 - `unknown`：当前版本不符合安全补丁规则。
 - `restored`：manifest 记录应用已经回滚。
 
@@ -345,15 +353,15 @@ go test ./...
 go vet ./...
 go build ./cmd/codex-speed-patch
 
-GOOS=darwin GOARCH=arm64 go build -o dist/v0.1.7/codex-speed-patch-darwin-arm64 ./cmd/codex-speed-patch
-GOOS=darwin GOARCH=amd64 go build -o dist/v0.1.7/codex-speed-patch-darwin-amd64 ./cmd/codex-speed-patch
-GOOS=linux GOARCH=amd64 go build -o dist/v0.1.7/codex-speed-patch-linux-amd64 ./cmd/codex-speed-patch
-GOOS=linux GOARCH=arm64 go build -o dist/v0.1.7/codex-speed-patch-linux-arm64 ./cmd/codex-speed-patch
-GOOS=windows GOARCH=amd64 go build -o dist/v0.1.7/codex-speed-patch-windows-amd64.exe ./cmd/codex-speed-patch
-GOOS=windows GOARCH=arm64 go build -o dist/v0.1.7/codex-speed-patch-windows-arm64.exe ./cmd/codex-speed-patch
+GOOS=darwin GOARCH=arm64 go build -o dist/v0.1.8/codex-speed-patch-darwin-arm64 ./cmd/codex-speed-patch
+GOOS=darwin GOARCH=amd64 go build -o dist/v0.1.8/codex-speed-patch-darwin-amd64 ./cmd/codex-speed-patch
+GOOS=linux GOARCH=amd64 go build -o dist/v0.1.8/codex-speed-patch-linux-amd64 ./cmd/codex-speed-patch
+GOOS=linux GOARCH=arm64 go build -o dist/v0.1.8/codex-speed-patch-linux-arm64 ./cmd/codex-speed-patch
+GOOS=windows GOARCH=amd64 go build -o dist/v0.1.8/codex-speed-patch-windows-amd64.exe ./cmd/codex-speed-patch
+GOOS=windows GOARCH=arm64 go build -o dist/v0.1.8/codex-speed-patch-windows-arm64.exe ./cmd/codex-speed-patch
 ```
 
-本地 `0.1.7` 产物的校验值位于 `dist/v0.1.7/SHA256SUMS.txt`。[CHECKSUMS.txt](CHECKSUMS.txt) 仅记录 `v0.1.0` 的历史二进制校验值。
+本地 `0.1.8` 产物的校验值位于 `dist/v0.1.8/SHA256SUMS.txt`。[CHECKSUMS.txt](CHECKSUMS.txt) 仅记录 `v0.1.0` 的历史二进制校验值。
 
 ## 状态文件
 
@@ -373,6 +381,7 @@ GOOS=windows GOARCH=arm64 go build -o dist/v0.1.7/codex-speed-patch-windows-arm6
 
 ## 已知限制
 
+- macOS v10 在该桌面应用的启动配置中指定版本对应的模型目录，不写入用户 `config.toml`；目录随应用更新后重新生成。
 - reasoning `ultra` 与速度 `ultrafast` 独立。内置 CLI 对 `gpt-6.1-sol` 的原生 Ultra 模式会发送 `xhigh`；补丁保留该执行语义。
 - Codex 前端结构变化后，旧语义规则可能返回 `unknown`。
 - 整包替换后的应用使用 ad-hoc 签名，依赖官方 Developer ID 的能力仍需验证。

@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
+
+	"codex-speed-patch/internal/asar"
 )
 
 // CatalogPatch changes only an embedded JSON data region. The replacement has
@@ -16,9 +19,14 @@ type CatalogPatch struct {
 	Original    []byte
 	Replacement []byte
 	Models      []string
+	External    bool
 }
 
 func PlanModelCatalog(data []byte, declared []string) (*CatalogPatch, error) {
+	return planModelCatalog(data, declared, true)
+}
+
+func planModelCatalog(data []byte, declared []string, preserveOffsets bool) (*CatalogPatch, error) {
 	if len(declared) == 0 {
 		return nil, nil
 	}
@@ -134,16 +142,19 @@ func PlanModelCatalog(data []byte, declared []string) (*CatalogPatch, error) {
 	for start+length < len(data) && data[start+length] == ' ' {
 		length++
 	}
-	if len(encoded) > length {
+	if preserveOffsets && len(encoded) > length {
 		return nil, errors.New("expanded native model catalog does not fit its original data region")
 	}
-	replacement := append(encoded, bytes.Repeat([]byte{' '}, length-len(encoded))...)
+	replacement := encoded
+	if preserveOffsets {
+		replacement = append(encoded, bytes.Repeat([]byte{' '}, length-len(encoded))...)
+	}
 	sort.Strings(changed)
 	return &CatalogPatch{Offset: start, Original: append([]byte(nil), data[start:start+length]...), Replacement: replacement, Models: changed}, nil
 }
 
 func ModelCatalogPatch(inst *Installation, declared []string) (*CatalogPatch, error) {
-	if len(declared) == 0 {
+	if len(declared) == 0 && inst.PackageKind != "macos-app" {
 		return nil, nil
 	}
 	if inst.CLIPath == "" || !regularFile(inst.CLIPath) {
@@ -156,12 +167,73 @@ func ModelCatalogPatch(inst *Installation, declared []string) (*CatalogPatch, er
 	if err != nil {
 		return nil, err
 	}
+	if inst.PackageKind == "macos-app" {
+		external, err := externalModelCatalog(data, declared)
+		if err != nil {
+			return nil, err
+		}
+		path := ModelCatalogPath(inst)
+		if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
+			return nil, errors.New("external model catalog must be a regular file")
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		current, err := os.ReadFile(path)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		if bytes.Equal(current, external) {
+			return nil, nil
+		}
+		return &CatalogPatch{External: true, Original: current, Replacement: external, Models: declared}, nil
+	}
 	return PlanModelCatalog(data, declared)
+}
+
+func ModelCatalogPath(inst *Installation) string {
+	return filepath.Join(inst.AppPath, "Contents", "Resources", asar.CatalogFileName)
+}
+
+func externalModelCatalog(data []byte, declared []string) ([]byte, error) {
+	plan, err := planModelCatalog(data, declared, false)
+	if err != nil {
+		return nil, err
+	}
+	if plan != nil {
+		data = plan.Replacement
+	}
+	start := bytes.Index(data, []byte(`{"models":[`))
+	if start < 0 {
+		start = bytes.Index(data, []byte("{\n  \"models\": ["))
+	}
+	if start < 0 {
+		return nil, errors.New("native model catalog is missing")
+	}
+	var raw json.RawMessage
+	if err := json.NewDecoder(bytes.NewReader(data[start:])).Decode(&raw); err != nil {
+		return nil, err
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, raw); err != nil {
+		return nil, err
+	}
+	return append(compact.Bytes(), '\n'), nil
 }
 
 func ApplyModelCatalog(inst *Installation, plan *CatalogPatch) error {
 	if plan == nil {
 		return nil
+	}
+	if plan.External {
+		path := ModelCatalogPath(inst)
+		current, err := os.ReadFile(path)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if !bytes.Equal(current, plan.Original) {
+			return errors.New("external model catalog changed since verification")
+		}
+		return os.WriteFile(path, plan.Replacement, 0o600)
 	}
 	data, err := os.ReadFile(inst.CLIPath)
 	if err != nil {

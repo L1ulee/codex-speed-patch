@@ -8,20 +8,28 @@ The patcher reuses Codex's existing model catalog, `service_tiers`, `service_tie
 
 ## Current Status
 
-- Patcher version: `0.1.7`; patch rule: `speed-mode-api-v9`
-- macOS test date: `2026-11-23`
+- Patcher version: `0.1.8`; patch rule: `speed-mode-api-v10`
+- macOS test date: `2026-11-24`
 - Latest Codex Desktop validation: `26.1117.41037` (build `29803`); previously tested: `26.1111.71704`, `26.1111.21308`, `26.1106.51428`, `26.1103.60933`, `26.1027.51404`, `26.1021.31345`, `26.1013.40934`, `26.1007.30912`
 
-This release supports the provider parameter added to saved tier readers, mixed Rspack module wrappers, and provider overrides in the Ultra query. It fixes v8 compatibility checks failing on `26.1117.41037`. Validation established:
+This release fixes macOS Computer Use and in-app browser connection failures caused by patch re-signing, while retaining native speed tiers and reasoning controls. Validation established:
 
-- An isolated `26.1117.41037` copy passed patch, signature, and Sparkle signer-chain checks. All 41 changed JavaScript assets passed syntax checks; the app remained stable for 12 seconds and exited normally.
-- Runtime regressions cover three saved tier readers, provider forwarding, Speed permissions, Ultra opt-outs, preferences, and model capabilities, plus mixed module wrappers, rejected inconsistent bindings, and idempotency.
-- The latest copy's embedded CLI catalog includes `priority` (Fast) and `ultrafast` for `gpt-6.1-sol`, `gpt-5.6-sol`, and `gpt-6-astra`.
-- The latest installed app completed a full backup, bundle replacement, and relaunch with deployment state `deployed`; its visible controls still require separate confirmation.
-- Previously, after v8 deployment to the installed `26.1103.60933` app, the user confirmed the Speed/lightning control appeared and could switch between Fast and Ultrafast.
-- The full Go test suite and `go vet`.
+- The installed app completed v9-to-v10 migration, bundle replacement, and relaunch with deployment state `deployed`. The bundled CLI and Service helper retain their OpenAI signatures.
+- Desktop Computer Use in the installed app operated Calculator and read `2+3=5`; the in-app browser opened and read a test page.
+- All 40 relevant JavaScript assets in the final isolated copy passed syntax checks. Signature, update signer-chain, startup, and idempotency checks passed. The user confirmed working Speed/Fast/Ultrafast and supported Ultra controls.
+- The external catalog retains `priority` (Fast) and `ultrafast` for `gpt-6.1-sol`, `gpt-5.6-sol`, and `gpt-6-astra`. A local mock upstream captured both request values.
+- The full Go test suite and `go vet` passed. Regressions cover the catalog and startup flags, CLI preservation, migration checks, rejected inconsistent data, idempotency, and failure rollback.
 
-Windows/Linux release binaries were cross-compiled and checked for format only. Real upstream requests, autonomous subagent tools, Keychain, push notifications, and actual official update installation still require end-to-end verification.
+macOS Intel and Windows/Linux release binaries were cross-compiled and checked for format only. Real upstream requests, autonomous subagent tools, Keychain, push notifications, and actual official update installation still require end-to-end verification.
+
+## 0.1.8 Fixes
+
+- Upgrades the rule to `speed-mode-api-v10`, preserving the OpenAI signatures of the CLI and `Codex (Service)` helper to restore Computer Use authentication.
+- Writes the augmented catalog to `Contents/Resources/codex-speed-models.json` and loads it through the native `model_catalog_json` startup flag. macOS no longer modifies or re-signs the CLI binary.
+- Selects the official Service helper through native `browser-subprocess-path` when starting the app-server host, restoring in-app browser connections while keeping peer authentication enabled.
+- Restores the CLI and helper of existing v9 installations from the same-version official full backup recorded in the manifest. Missing backups, version mismatches, or signature failures stop migration.
+- Includes the external catalog in the application seal and deployment checks, retaining the official original backup. Failed deployment restores the prior app and manifest; repeated repair reports no changes.
+- Windows/Linux retain embedded catalog patching. User configuration, authentication, and Hooks are not rewritten.
 
 ## 0.1.7 Fixes
 
@@ -98,7 +106,7 @@ The patcher performs these steps:
 4. Recalculate every changed asset's SHA-256 and ASAR block hashes.
 5. Update Header JSON offsets, sizes, and integrity while retaining links, unpacked entries, and unknown metadata.
 6. On macOS, write the Header JSON SHA-256 to `ElectronAsarIntegrity` and update the Framework's `__asar_integrity` digest.
-7. Reconcile the embedded CLI catalog with verified model capabilities; re-sign its nested bundle when changed, then verify signatures and update signer identities across Electron, Sparkle, and the outer app.
+7. Build the catalog from verified model capabilities. macOS uses external JSON to preserve the official CLI signature; other platforms retain embedded catalog patching. Verify signatures and update signer identities across Electron, Sparkle, and the outer app.
 
 ## Safety Model
 
@@ -167,7 +175,7 @@ These capabilities may be affected. A full official application backup restores 
 
 ### 1. Select a Binary
 
-Download your platform binary and `SHA256SUMS.txt` from the [v0.1.7 Release](https://github.com/L1ulee/codex-speed-patch/releases/tag/v0.1.7). Local source builds are in `dist/v0.1.7/`; verify against the checksum manifest from the same Release.
+Download your platform binary and `SHA256SUMS.txt` from the [v0.1.8 Release](https://github.com/L1ulee/codex-speed-patch/releases/tag/v0.1.8). Local source builds are in `dist/v0.1.8/`; verify against the checksum manifest from the same Release.
 
 ```text
 codex-speed-patch-darwin-arm64
@@ -181,13 +189,13 @@ codex-speed-patch-windows-arm64.exe
 macOS example:
 
 ```bash
-chmod +x dist/v0.1.7/codex-speed-patch-darwin-arm64
+chmod +x dist/v0.1.8/codex-speed-patch-darwin-arm64
 ```
 
 ### 2. Inspect the State
 
 ```bash
-dist/v0.1.7/codex-speed-patch-darwin-arm64 status \
+dist/v0.1.8/codex-speed-patch-darwin-arm64 status \
   --app "/Applications/ChatGPT.app"
 ```
 
@@ -195,7 +203,7 @@ State values:
 
 - `original`: the patch is not active.
 - `patched`: the patch is active.
-- `partial`: UI, request paths, or the embedded CLI catalog still require repair.
+- `partial`: UI, request paths, the model catalog, or runtime signing identities still require repair.
 - `unknown`: the installed version does not match a safe patch rule.
 - `restored`: the manifest records a completed rollback.
 
@@ -345,15 +353,15 @@ go test ./...
 go vet ./...
 go build ./cmd/codex-speed-patch
 
-GOOS=darwin GOARCH=arm64 go build -o dist/v0.1.7/codex-speed-patch-darwin-arm64 ./cmd/codex-speed-patch
-GOOS=darwin GOARCH=amd64 go build -o dist/v0.1.7/codex-speed-patch-darwin-amd64 ./cmd/codex-speed-patch
-GOOS=linux GOARCH=amd64 go build -o dist/v0.1.7/codex-speed-patch-linux-amd64 ./cmd/codex-speed-patch
-GOOS=linux GOARCH=arm64 go build -o dist/v0.1.7/codex-speed-patch-linux-arm64 ./cmd/codex-speed-patch
-GOOS=windows GOARCH=amd64 go build -o dist/v0.1.7/codex-speed-patch-windows-amd64.exe ./cmd/codex-speed-patch
-GOOS=windows GOARCH=arm64 go build -o dist/v0.1.7/codex-speed-patch-windows-arm64.exe ./cmd/codex-speed-patch
+GOOS=darwin GOARCH=arm64 go build -o dist/v0.1.8/codex-speed-patch-darwin-arm64 ./cmd/codex-speed-patch
+GOOS=darwin GOARCH=amd64 go build -o dist/v0.1.8/codex-speed-patch-darwin-amd64 ./cmd/codex-speed-patch
+GOOS=linux GOARCH=amd64 go build -o dist/v0.1.8/codex-speed-patch-linux-amd64 ./cmd/codex-speed-patch
+GOOS=linux GOARCH=arm64 go build -o dist/v0.1.8/codex-speed-patch-linux-arm64 ./cmd/codex-speed-patch
+GOOS=windows GOARCH=amd64 go build -o dist/v0.1.8/codex-speed-patch-windows-amd64.exe ./cmd/codex-speed-patch
+GOOS=windows GOARCH=arm64 go build -o dist/v0.1.8/codex-speed-patch-windows-arm64.exe ./cmd/codex-speed-patch
 ```
 
-Local `0.1.7` checksums are in `dist/v0.1.7/SHA256SUMS.txt`. [CHECKSUMS.txt](CHECKSUMS.txt) records only historical `v0.1.0` binary checksums.
+Local `0.1.8` checksums are in `dist/v0.1.8/SHA256SUMS.txt`. [CHECKSUMS.txt](CHECKSUMS.txt) records only historical `v0.1.0` binary checksums.
 
 ## State Files
 
@@ -373,6 +381,7 @@ The default state directory is:
 
 ## Known Limitations
 
+- On macOS, v10 selects a version-specific model catalog in this desktop application's startup configuration without writing user `config.toml`; it is regenerated after an app update.
 - Reasoning `ultra` is independent of speed `ultrafast`. The bundled CLI sends `xhigh` for the native Ultra mode on `gpt-6.1-sol`; the patch retains that execution behavior.
 - A Codex frontend change can cause the existing semantic rule to return `unknown`.
 - Replaced bundles use ad-hoc signatures; capabilities depending on the official Developer ID still require verification.

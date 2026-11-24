@@ -78,6 +78,8 @@ type ProbeResult struct {
 	TargetPath      string
 	TargetPaths     []string
 	UltrafastModels []string
+	CatalogLoader   bool
+	SignedWorker    bool
 }
 
 type PatchResult struct {
@@ -181,6 +183,8 @@ func (a *Archive) ReadEntry(entry Entry) ([]byte, error) {
 func (a *Archive) Probe() (*ProbeResult, error) {
 	var report ruleReport
 	var hostReaders, bootstrapReaders, webviewReaders int
+	catalogLoader := false
+	signedWorker := false
 	var paths []string
 	uiPath := ""
 	var models []string
@@ -212,6 +216,20 @@ func (a *Archive) Probe() (*ProbeResult, error) {
 		if err != nil {
 			return nil, err
 		}
+		catalog, loaded, err := scanCatalogRules(entry, data)
+		if err != nil {
+			return nil, err
+		}
+		catalogLoader = catalogLoader || loaded
+		r.patched += catalog.patched
+		r.edits = append(r.edits, catalog.edits...)
+		worker, signed, err := scanWorkerRules(entry, data)
+		if err != nil {
+			return nil, err
+		}
+		signedWorker = signedWorker || signed
+		r.patched += worker.patched
+		r.edits = append(r.edits, worker.edits...)
 		efforts, err := scanEffortRules(entry, data)
 		if err != nil {
 			return nil, err
@@ -226,7 +244,7 @@ func (a *Archive) Probe() (*ProbeResult, error) {
 		}
 		r.patched += efforts.patched
 		r.edits = append(r.edits, efforts.edits...)
-		if r.ui+r.readers+r.policies+efforts.effortQueries > 0 {
+		if r.ui+r.readers+r.policies+efforts.effortQueries > 0 || len(catalog.edits)+len(worker.edits) > 0 {
 			paths = append(paths, entry.Path)
 		}
 		if r.ui > 0 {
@@ -296,7 +314,7 @@ func (a *Archive) Probe() (*ProbeResult, error) {
 		report.patched += r.patched
 		report.edits = append(report.edits, r.edits...)
 	}
-	result := &ProbeResult{Status: StatusUnknown, TargetPath: uiPath, TargetPaths: paths, Candidates: report.edits, UltrafastModels: sortedModels(models)}
+	result := &ProbeResult{Status: StatusUnknown, TargetPath: uiPath, TargetPaths: paths, Candidates: report.edits, UltrafastModels: sortedModels(models), CatalogLoader: catalogLoader, SignedWorker: signedWorker}
 	tiersComplete := report.tierMenus == 0 && report.tierLookups == 0 || report.tierMenus == 1 && report.tierLookups == 1 || report.tierMenusRspack && report.tierLookups == 0
 	// Newer packages include a saved reader in the separate app-server host as
 	// well as the bootstrap and webview. Extra unrelated readers stay ambiguous.

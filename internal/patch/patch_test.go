@@ -73,3 +73,29 @@ func TestRecordedNativeCLIHashDetectsReplacementAndIgnoresOtherVersions(t *testi
 		t.Fatal("an older installation's record was applied to the new CLI")
 	}
 }
+
+func TestRecordedExternalCatalogDetectsChangedDataAndIgnoresStaleRecord(t *testing.T) {
+	inst := &platform.Installation{AppPath: t.TempDir(), Version: "1"}
+	path := platform.ModelCatalogPath(inst)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"models":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := asar.FileSHA256(path)
+	manifest := &state.Manifest{AppPath: inst.AppPath, AppVersion: inst.Version, CatalogSHA256: hash}
+	if err := verifyRecordedCatalog(inst, manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("changed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyRecordedCatalog(inst, manifest); err == nil {
+		t.Fatal("changed external catalog was accepted")
+	}
+	manifest.AppVersion = "older"
+	if err := verifyRecordedCatalog(inst, manifest); err != nil {
+		t.Fatal("stale catalog record was used for another version")
+	}
+}

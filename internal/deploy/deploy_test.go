@@ -229,6 +229,27 @@ func TestUpdateDuringShutdownIsPreservedAndReopened(t *testing.T) {
 	}
 }
 
+func TestChangedExternalCatalogCancelsBeforeShutdown(t *testing.T) {
+	f := makeFixture(t)
+	path := filepath.Join(f.record.StagePath, "Contents", "Resources", asar.CatalogFileName)
+	if err := os.WriteFile(path, []byte(`{"models":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.record.Manifest.CatalogSHA256, _ = asar.FileSHA256(path)
+	if err := save(f.service.CodexHome, f.record); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("changed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.RunWorker(f.record.ID); err == nil {
+		t.Fatal("changed external catalog was accepted")
+	}
+	if f.quits != 0 {
+		t.Fatal("application was stopped before catalog verification")
+	}
+}
+
 func TestRollbackRetainsOriginalIfReplacementCannotStop(t *testing.T) {
 	f := makeFixture(t)
 	f.service.operations.launch = func(path, session string) error { return errors.New("startup verification failed") }
